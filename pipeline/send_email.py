@@ -9,8 +9,9 @@ from email.mime.multipart import MIMEMultipart
 
 load_dotenv()
 
+os.makedirs('logs', exist_ok=True)
 logging.basicConfig(
-    filename='email_log.log',
+    filename='logs/email.log',
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
@@ -29,7 +30,7 @@ def send_email(to, subject, body):
     # Input validation
     if not to or not subject or not body:
         logging.error(f'Invalid email data: to={to}, subject={subject}')
-        return False
+        return {"success": False, "message": "Invalid email data"}
 
     # Unique ID for tracking
     email_id = str(uuid.uuid4())
@@ -56,7 +57,7 @@ def send_email(to, subject, body):
                 server.sendmail(SENDER_EMAIL, to, msg.as_string())
 
             logging.info(f'[{email_id}] Email sent to {masked_to} | Subject: {subject}')
-            return True
+            return {"success": True, "message": "sent"}
 
         except Exception as e:
             logging.warning(
@@ -71,7 +72,14 @@ def send_email(to, subject, body):
                     f'[{email_id}] Failed to send email to {masked_to} '
                     f'after {MAX_RETRIES} attempts'
                 )
-                return False
+                return {"success": False, "message": f"Failed after {MAX_RETRIES} attempts"}
 
-    return False
-send_email("ajith1731715@gmail.com", "Test Email from Kalnet", "This is a test email sent from the Kalnet.")
+    return {"success": False, "message": "Unexpected error"}
+
+if __name__ == "__main__":
+    result = send_email(
+        "ajith1731715@gmail.com",
+        "Test Email from Kalnet",
+        "This is a test email sent from the Kalnet."
+    )
+    print(result)
