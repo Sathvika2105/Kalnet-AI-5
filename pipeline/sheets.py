@@ -1,23 +1,26 @@
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 
+USE_MOCK_FOR_DEMO = True
 
-scope = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive"
-]
-
-
-creds = ServiceAccountCredentials.from_json_keyfile_name(
-    "config/service_account.json",
-    scope
-)
-
-
-client = gspread.authorize(creds)
-
-sheet = client.open("Test_Emails_KALNET").sheet1
+if USE_MOCK_FOR_DEMO:
+    from config.mock_google_sheets import MockClient as RealClient
+    from config.mock_google_sheets import mock_authorize as authorize
+    print("Running in DEMO MODE with mock data")
+    client = authorize(None)
+    sheet = client.open("Test_Emails_KALNET").sheet1
+else:
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_name(
+        "config/service_account.json",
+        scope
+    )
+    client = gspread.authorize(creds)
+    sheet = client.open("Test_Emails_KALNET").sheet1
 
 
 def clean_lead_data(lead):
@@ -96,7 +99,7 @@ def mark_email_sent(lead_id, sequence_step):
 
             sheet.update_cell(index, 5, current_time)
 
-            sheet.update_cell(index, 7, sequence_step)
+            sheet.update_cell(index, 6, sequence_step)  # col 6 = sequence_step
 
             print(f"Updated lead {lead_id}")
 
@@ -113,7 +116,7 @@ def mark_replied(lead_id):
 
         if str(row["lead_id"]) == str(lead_id):
 
-            sheet.update_cell(index, 8, "TRUE")
+            sheet.update_cell(index, 7, True)  # col 7 = replied
 
             print(f"Lead {lead_id} marked as replied")
 
