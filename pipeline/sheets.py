@@ -2,7 +2,7 @@ from datetime import datetime
 
 USE_MOCK_FOR_DEMO = True
 
-# DEMO / MOCK MODE
+# DEMO / MOCK MODE 
 if USE_MOCK_FOR_DEMO:
 
     from config.mock_google_sheets import MockClient as RealClient
