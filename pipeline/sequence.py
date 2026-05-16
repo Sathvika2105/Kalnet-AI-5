@@ -27,7 +27,8 @@ import logging
 import os
 import sys
 from datetime import date, timedelta
- 
+from typing import List, Dict
+
 # --------------------------------------------------------------------------
 # Windows UTF-8 fix
 # --------------------------------------------------------------------------
