@@ -2,10 +2,7 @@ from datetime import datetime
 
 USE_MOCK_FOR_DEMO = True
 
-
-# =========================
 # DEMO / MOCK MODE
-# =========================
 if USE_MOCK_FOR_DEMO:
 
     from config.mock_google_sheets import MockClient as RealClient
@@ -18,9 +15,7 @@ if USE_MOCK_FOR_DEMO:
     sheet = client.open("Test_Emails_KALNET").sheet1
 
 
-# =========================
 # REAL GOOGLE SHEETS MODE
-# =========================
 else:
 
     import gspread
@@ -41,9 +36,7 @@ else:
     sheet = client.open("Test_Emails_KALNET").sheet1
 
 
-# =========================
 # CLEAN LEAD DATA
-# =========================
 def clean_lead_data(lead):
 
     return {
@@ -69,9 +62,7 @@ def clean_lead_data(lead):
     }
 
 
-# =========================
 # GET ALL LEADS
-# =========================
 def get_all_leads():
 
     records = sheet.get_all_records()
@@ -87,9 +78,7 @@ def get_all_leads():
     return leads
 
 
-# =========================
 # GET PENDING LEADS
-# =========================
 def get_pending_leads():
 
     leads = get_all_leads()
@@ -105,9 +94,7 @@ def get_pending_leads():
     return pending
 
 
-# =========================
 # GET LEAD BY ID
-# =========================
 def get_lead_by_id(lead_id):
 
     leads = get_all_leads()
@@ -121,9 +108,7 @@ def get_lead_by_id(lead_id):
     return None
 
 
-# =========================
 # MARK EMAIL SENT
-# =========================
 def mark_email_sent(lead_id, sequence_step):
 
     records = sheet.get_all_records()
@@ -159,9 +144,7 @@ def mark_email_sent(lead_id, sequence_step):
     return False
 
 
-# =========================
 # MARK REPLIED
-# =========================
 def mark_replied(lead_id):
 
     records = sheet.get_all_records()
