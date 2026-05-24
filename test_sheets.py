@@ -5,5 +5,6 @@ scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/au
 creds = ServiceAccountCredentials.from_json_keyfile_name("config/service_account.json", scope)
 client = gspread.authorize(creds)
 
-sheet = client.open("Test_Emails_KALNET").sheet1
+# sheet = client.open("Test_Emails_KALNET").sheet1
+sheet = client.open_by_key("1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY").sheet1
 print(sheet.get_all_records())

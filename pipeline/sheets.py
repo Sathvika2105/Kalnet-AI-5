@@ -12,7 +12,8 @@ if USE_MOCK_FOR_DEMO:
 
     client = authorize(None)
 
-    sheet = client.open("Test_Emails_KALNET").sheet1
+    # sheet = client.open("Test_Emails_KALNET").sheet1
+    sheet = client.open_by_key("1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY").sheet1
 
 
 # REAL GOOGLE SHEETS MODE
@@ -33,7 +34,8 @@ else:
 
     client = gspread.authorize(creds)
 
-    sheet = client.open("Test_Emails_KALNET").sheet1
+    # sheet = client.open("Test_Emails_KALNET").sheet1
+    sheet = client.open_by_key("1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY").sheet1
 
 
 # CLEAN LEAD DATA
