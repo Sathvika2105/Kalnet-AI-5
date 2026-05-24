@@ -1,6 +1,6 @@
 from datetime import datetime
 
-USE_MOCK_FOR_DEMO = True
+USE_MOCK_FOR_DEMO = False
 
 # DEMO / MOCK MODE 
 if USE_MOCK_FOR_DEMO:
