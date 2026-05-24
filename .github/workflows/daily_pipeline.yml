@@ -1,1 +1,31 @@
 
+name: Daily Email Pipeline
+
+on:
+  schedule:
+    - cron: '30 3 * * *'  # Runs every day at 9:00 AM IST
+  workflow_dispatch:        # Lets you run it manually too
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
+          RISHAV_PHONE: ${{ secrets.RISHAV_PHONE }}
+          CALLMEBOT_API_KEY: ${{ secrets.CALLMEBOT_API_KEY }}
+        run: python pipeline/run.py
