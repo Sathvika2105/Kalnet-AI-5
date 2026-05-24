@@ -18,10 +18,26 @@ Run:
 
 import os
 import sys
+import io
 import logging
 import time
 from datetime import datetime
 from dotenv import load_dotenv
+
+# Configure stdout for UTF-8 with error handling
+if sys.stdout.encoding is None or sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
+    sys.stdout = io.TextIOWrapper(
+        sys.stdout.buffer, 
+        encoding='utf-8', 
+        errors='replace',
+        write_through=True
+    )
+    sys.stderr = io.TextIOWrapper(
+        sys.stderr.buffer,
+        encoding='utf-8',
+        errors='replace',
+        write_through=True
+    )
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -40,14 +56,65 @@ load_dotenv()
 # ──────────────────────────────────────────────
 os.makedirs('logs', exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler('logs/pipeline.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+
+# Custom formatter that replaces emoji characters for console output
+class ASCIIFormatter(logging.Formatter):
+    """Formatter that replaces emoji characters with ASCII-safe alternatives"""
+    EMOJI_MAP = {
+        '✅': '[OK]',
+        '❌': '[FAIL]',
+        '⚠️': '[WARN]',
+        '⚠': '[WARN]',
+    }
+    
+    def format(self, record):
+        # Get the formatted message from parent
+        result = super().format(record)
+        # Replace emoji characters
+        for emoji, replacement in self.EMOJI_MAP.items():
+            result = result.replace(emoji, replacement)
+        return result
+
+
+# Custom StreamHandler that handles emoji encoding issues
+class UTF8SafeStreamHandler(logging.StreamHandler):
+    """StreamHandler that safely handles emoji by replacing them before writing"""
+    EMOJI_MAP = {
+        '✅': '[OK]',
+        '❌': '[FAIL]',
+        '⚠️': '[WARN]',
+        '⚠': '[WARN]',
+    }
+    
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            # Final safety check: replace any remaining emoji
+            for emoji, replacement in self.EMOJI_MAP.items():
+                msg = msg.replace(emoji, replacement)
+            self.stream.write(msg + self.terminator)
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+
+# Create root logger and handlers
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+# Prevent logging module errors from propagating
+logging.raiseExceptions = False
+
+# File handler (keep emoji characters)
+file_handler = logging.FileHandler('logs/pipeline.log', encoding='utf-8')
+file_formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+file_handler.setFormatter(file_formatter)
+root_logger.addHandler(file_handler)
+
+# Stream handler (replace emoji with ASCII)
+stream_handler = UTF8SafeStreamHandler(sys.stdout)
+ascii_formatter = ASCIIFormatter('%(asctime)s [%(levelname)s] %(message)s')
+stream_handler.setFormatter(ascii_formatter)
+root_logger.addHandler(stream_handler)
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +188,7 @@ def step_3_identify_due_emails(leads):
             log.info("Leads due for emails:")
             for lead in due_leads:
                 log.info(f"  - {lead['name']} ({lead['email']}) - Email #{lead['email_number']}")
-            log.info()
+            log.info("")
         
         return due_leads
     except Exception as e:
@@ -261,11 +328,16 @@ def run_pipeline():
     """
     Execute the complete email automation pipeline
     """
-    log.info("\n")
-    log.info("╔" + "=" * 68 + "╗")
-    log.info("║" + " " * 15 + "KALNET AI-5 EMAIL AUTOMATION PIPELINE" + " " * 17 + "║")
-    log.info("║" + " " * 20 + f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}" + " " * 25 + "║")
-    log.info("╚" + "=" * 68 + "╝\n")
+    # log.info("\n")
+    # log.info("╔" + "=" * 68 + "╗")
+    # log.info("║" + " " * 15 + "KALNET AI-5 EMAIL AUTOMATION PIPELINE" + " " * 17 + "║")
+    # log.info("║" + " " * 20 + f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}" + " " * 25 + "║")
+    # log.info("╚" + "=" * 68 + "╝\n")
+
+    log.info("=" * 70)
+    log.info("KALNET AI-5 EMAIL AUTOMATION PIPELINE")
+    log.info(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    log.info("=" * 70 + "\n")
     
     # Initialize counters
     sent_count = 0
