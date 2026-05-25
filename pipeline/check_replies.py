@@ -24,8 +24,9 @@ load_dotenv(dotenv_path=env_path)
 
 GMAIL_ADDRESS      = os.getenv("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
-RISHAV_PHONE       = os.getenv("RISHAV_PHONE")
-CALLMEBOT_API_KEY  = os.getenv("CALLMEBOT_API_KEY")
+RISHAV_PHONE         = os.getenv("RISHAV_PHONE")
+ULTRAMSG_INSTANCE_ID = os.getenv("ULTRAMSG_INSTANCE_ID")
+ULTRAMSG_TOKEN       = os.getenv("ULTRAMSG_TOKEN")
 
 UNSUBSCRIBE_TRIGGERS = [
     "stop",
@@ -59,8 +60,9 @@ def validate_env():
     missing = []
     if not GMAIL_ADDRESS:      missing.append("GMAIL_ADDRESS")
     if not GMAIL_APP_PASSWORD: missing.append("GMAIL_APP_PASSWORD")
-    if not RISHAV_PHONE:       missing.append("RISHAV_PHONE")
-    if not CALLMEBOT_API_KEY:  missing.append("CALLMEBOT_API_KEY")
+    if not RISHAV_PHONE:         missing.append("RISHAV_PHONE")
+    if not ULTRAMSG_INSTANCE_ID: missing.append("ULTRAMSG_INSTANCE_ID")
+    if not ULTRAMSG_TOKEN:       missing.append("ULTRAMSG_TOKEN")
     if missing:
         print(f"ERROR: Missing in .env file: {', '.join(missing)}")
         print("Fill these in your .env file and try again.")
@@ -128,26 +130,26 @@ def send_whatsapp_notification(school_name: str, sender_email: str,
             f"Preview: {reply_snippet[:100]}"
         )
     try:
-        resp = requests.get(
-            "https://api.callmebot.com/whatsapp.php",
-            params={
-                "phone":  RISHAV_PHONE,
-                "text":   message,
-                "apikey": CALLMEBOT_API_KEY
+        resp = requests.post(
+            f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE_ID}/messages/chat",
+            json={
+                "token": ULTRAMSG_TOKEN,
+                "to":    RISHAV_PHONE,
+                "body":  message
             },
             timeout=15
         )
         if resp.status_code == 200:
-            log.info(f"  WhatsApp sent to Rishav for: {school_name}")
+            log.info(f"  WhatsApp sent for: {school_name}")
             return True
         else:
-            log.warning(f"  CallMeBot returned {resp.status_code}: {resp.text[:100]}")
+            log.warning(f"  UltraMsg returned {resp.status_code}: {resp.text[:100]}")
             return False
     except requests.exceptions.Timeout:
-        log.error("  CallMeBot request timed out")
+        log.error("  UltraMsg request timed out")
         return False
     except requests.exceptions.RequestException as e:
-        log.error(f"  CallMeBot failed: {e}")
+        log.error(f"  UltraMsg failed: {e}")
         return False
 
 

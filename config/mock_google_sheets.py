@@ -55,6 +55,9 @@ class MockClient:
     def open(self, sheet_name: str):
         return MockSpreadsheet(self.demo_data)
 
+    def open_by_key(self, key: str):
+        return MockSpreadsheet(self.demo_data)
+
 class MockSpreadsheet:
     def __init__(self, data: List[Dict]):
         self.sheet1 = MockWorksheet(data)

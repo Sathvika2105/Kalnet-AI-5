@@ -27,5 +27,6 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
           RISHAV_PHONE: ${{ secrets.RISHAV_PHONE }}
-          CALLMEBOT_API_KEY: ${{ secrets.CALLMEBOT_API_KEY }}
+          ULTRAMSG_INSTANCE_ID: ${{ secrets.ULTRAMSG_INSTANCE_ID }}
+          ULTRAMSG_TOKEN: ${{ secrets.ULTRAMSG_TOKEN }}
         run: python pipeline/run.py
