@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-load_dotenv()
+# Load .env from root directory (parent of pipeline/)
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 os.makedirs('logs', exist_ok=True)
 logging.basicConfig(
@@ -21,6 +22,13 @@ SMTP_SERVER = 'smtp.gmail.com'
 SMTP_PORT = 587
 SENDER_EMAIL = os.getenv("EMAIL_USER")
 SENDER_PASSWORD = os.getenv("EMAIL_PASS")
+
+# Validate credentials are loaded
+if not SENDER_EMAIL or not SENDER_PASSWORD:
+    raise ValueError(
+        "Missing email credentials! Please ensure .env file contains "
+        "EMAIL_USER and EMAIL_PASS variables."
+    )
 
 DELAY_SECONDS = 30
 MAX_RETRIES = 2  # 1 initial attempt + 1 retry
