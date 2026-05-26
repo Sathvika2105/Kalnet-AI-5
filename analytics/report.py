@@ -1,14 +1,5 @@
 from collections import Counter
-
-# MOCK DATA
-MOCK_DATA = [
-    {"lead_id": "L1", "name": "Admin", "email": "admin@stxaviers.edu", "company": "St Xaviers", "email_sent_at": "2026-04-20", "sequence_step": 1, "replied": True, "tier": 1, "subject_line": "AI tools for your classrooms"},
-    {"lead_id": "L2", "name": "Principal", "email": "principal@dps.edu", "company": "DPS", "email_sent_at": "2026-04-20", "sequence_step": 1, "replied": False, "tier": 1, "subject_line": "Quick question regarding your IT stack"},
-    {"lead_id": "L3", "name": "Hello", "email": "hello@greenwood.edu", "company": "Greenwood", "email_sent_at": "2026-04-20", "sequence_step": 1, "replied": True, "tier": 2, "subject_line": "AI tools for your classrooms"},
-    {"lead_id": "L4", "name": "IT", "email": "it@oakridge.edu", "company": "Oakridge", "email_sent_at": "2026-04-20", "sequence_step": 1, "replied": False, "tier": 1, "subject_line": "Quick question regarding your IT stack"},
-    {"lead_id": "L5", "name": "Director", "email": "director@valleyschool.edu", "company": "Valley School", "email_sent_at": "2026-04-20", "sequence_step": 1, "replied": True, "tier": 2, "subject_line": "Improving student outcomes with AI"},
-    {"lead_id": "L6", "name": "Contact", "email": "contact@newera.edu", "company": "New Era", "email_sent_at": "", "sequence_step": 0, "replied": False, "tier": 2, "subject_line": ""}, # Not sent yet
-]
+from pipeline import sheets
 
 # CORE ANALYTICS LOGIC
 def generate_metrics(data):
@@ -78,6 +69,16 @@ def print_report(metrics):
             print(f"   Rate: {item['rate']:.1f}% ({item['replies']} replies)")
 
 if __name__ == "__main__":
-    print("Fetching data and calculating metrics...\n")
-    report_data = generate_metrics(MOCK_DATA)
-    print_report(report_data)
+    print("Fetching live data from Google Sheets...\n")
+    
+    try:
+        live_data = sheets.get_all_leads() 
+        
+        if not live_data:
+            print("No data returned from Google Sheets. The sheet might be empty.")
+        else:
+            report_data = generate_metrics(live_data)
+            print_report(report_data)
+            
+    except Exception as e:
+        print(f"Integration Error: Could not fetch data from sheets.py. Details: {e}")
