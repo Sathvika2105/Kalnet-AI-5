@@ -1,323 +1,373 @@
-"""
-Environment variables (put in .env file in project root):
-  GMAIL_ADDRESS       = kalnet.outreach@gmail.com
-  GMAIL_APP_PASSWORD  = your 16-char Gmail App Password (with spaces is fine)
-  RISHAV_PHONE        = +91XXXXXXXXXX
-  CALLMEBOT_API_KEY   = your CallMeBot API key
-"""
-
 import imaplib
 import email
+import email.utils
 import os
+import sys
 import time
 import logging
 import requests
 from datetime import date
 from email.header import decode_header
 from dotenv import load_dotenv
-import sys
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'pipeline'))
-import sheets
 
-# ──────────────────────────────────────────────
-# Load environment variables from .env file
-# ──────────────────────────────────────────────
-load_dotenv()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    import sheets
+except ImportError:
+    print("ERROR: Cannot import sheets.py")
+    print("Make sure sheets.py is in the same pipeline/ folder")
+    sys.exit(1)
+
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env')
+load_dotenv(dotenv_path=env_path)
 
 GMAIL_ADDRESS      = os.getenv("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
-RISHAV_PHONE       = os.getenv("RISHAV_PHONE")
-CALLMEBOT_API_KEY  = os.getenv("CALLMEBOT_API_KEY")
+RISHAV_PHONE         = os.getenv("RISHAV_PHONE")
+ULTRAMSG_INSTANCE_ID = os.getenv("ULTRAMSG_INSTANCE_ID")
+ULTRAMSG_TOKEN       = os.getenv("ULTRAMSG_TOKEN")
 
-# ──────────────────────────────────────────────
-# Logging setup — logs go to /logs/replies.log
-# ──────────────────────────────────────────────
-os.makedirs("logs", exist_ok=True)
+UNSUBSCRIBE_TRIGGERS = [
+    "stop",
+    "unsubscribe",
+    "remove me",
+    "opt out",
+    "opt-out",
+    "do not contact",
+    "please remove",
+    "take me off",
+    "not interested",
+    "don't contact",
+]
+
+log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs')
+os.makedirs(log_dir, exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
-        logging.FileHandler("logs/replies.log"),
-        logging.StreamHandler()  # also prints to terminal
+        logging.FileHandler(os.path.join(log_dir, 'replies.log')),
+        logging.StreamHandler(sys.stdout)
     ]
 )
-log = logging.getLogger(__name__)
+log = logging.getLogger("check_replies")
 
 
-# ──────────────────────────────────────────────
-# UTILITY: Decode email subject safely
-# ──────────────────────────────────────────────
+def validate_env():
+    missing = []
+    if not GMAIL_ADDRESS:      missing.append("GMAIL_ADDRESS")
+    if not GMAIL_APP_PASSWORD: missing.append("GMAIL_APP_PASSWORD")
+    if not RISHAV_PHONE:         missing.append("RISHAV_PHONE")
+    if not ULTRAMSG_INSTANCE_ID: missing.append("ULTRAMSG_INSTANCE_ID")
+    if not ULTRAMSG_TOKEN:       missing.append("ULTRAMSG_TOKEN")
+    if missing:
+        print(f"ERROR: Missing in .env file: {', '.join(missing)}")
+        print("Fill these in your .env file and try again.")
+        sys.exit(1)
+
+
 def decode_subject(raw_subject: str) -> str:
-    """Decode email subject that may be encoded (e.g. UTF-8 or base64)."""
     if not raw_subject:
         return "(no subject)"
-    parts = decode_header(raw_subject)
-    decoded = ""
-    for part, encoding in parts:
-        if isinstance(part, bytes):
-            decoded += part.decode(encoding or "utf-8", errors="replace")
-        else:
-            decoded += part
-    return decoded
+    try:
+        parts = decode_header(raw_subject)
+        decoded = ""
+        for part, enc in parts:
+            if isinstance(part, bytes):
+                decoded += part.decode(enc or "utf-8", errors="replace")
+            else:
+                decoded += str(part)
+        return decoded.strip()
+    except Exception:
+        return str(raw_subject)
 
 
-# ──────────────────────────────────────────────
-# UTILITY: Extract plain text body from email
-# ──────────────────────────────────────────────
 def extract_body(msg) -> str:
-    """
-    Extract the plain-text body of an email message.
-    Handles multipart emails (text + HTML).
-    Returns first 200 characters as required.
-    """
     body = ""
-
     if msg.is_multipart():
         for part in msg.walk():
             content_type = part.get_content_type()
-            disposition = str(part.get("Content-Disposition", ""))
-
-            # We want plain text, not attachments
+            disposition  = str(part.get("Content-Disposition", ""))
             if content_type == "text/plain" and "attachment" not in disposition:
                 charset = part.get_content_charset() or "utf-8"
                 try:
                     body = part.get_payload(decode=True).decode(charset, errors="replace")
                 except Exception:
                     body = part.get_payload(decode=True).decode("utf-8", errors="replace")
-                break  # stop at first plain text part
+                break
     else:
-        # Single part email
         charset = msg.get_content_charset() or "utf-8"
         try:
-            body = msg.get_payload(decode=True).decode(charset, errors="replace")
+            raw = msg.get_payload(decode=True)
+            body = raw.decode(charset, errors="replace") if raw else ""
         except Exception:
             body = ""
-
-    # Strip excessive whitespace and return first 200 chars
-    body = " ".join(body.split())
-    return body[:200]
+    return " ".join(body.split())[:200]
 
 
-# ──────────────────────────────────────────────
-# WHATSAPP: Send notification via CallMeBot
-# ──────────────────────────────────────────────
-def send_whatsapp_notification(school_name: str, sender_email: str, reply_snippet: str) -> bool:
-    """
-    Send a WhatsApp message to Rishav when a reply is detected.
-    Uses CallMeBot free API.
-    Docs: https://www.callmebot.com/blog/free-api-whatsapp-messages/
-    """
-    message = (
-        f"📩 REPLY DETECTED — KALNET AI-5\n"
-        f"School: {school_name}\n"
-        f"From: {sender_email}\n"
-        f"Preview: {reply_snippet[:100]}..."
-    )
+def is_unsubscribe_request(subject: str, body: str) -> bool:
+    combined = (subject + " " + body).lower()
+    return any(trigger in combined for trigger in UNSUBSCRIBE_TRIGGERS)
 
-    # CallMeBot API endpoint
-    url = "https://api.callmebot.com/whatsapp.php"
-    params = {
-        "phone":  RISHAV_PHONE,
-        "text":   message,
-        "apikey": CALLMEBOT_API_KEY
-    }
 
+def send_whatsapp_notification(school_name: str, sender_email: str,
+                                reply_snippet: str, is_unsub: bool = False) -> bool:
+    if is_unsub:
+        message = (
+            f"STOP RECEIVED — KALNET AI-5\n"
+            f"School : {school_name}\n"
+            f"Email  : {sender_email}\n"
+            f"Action : Marked unsubscribed. No more emails."
+        )
+    else:
+        message = (
+            f"REPLY DETECTED — KALNET AI-5\n"
+            f"School : {school_name}\n"
+            f"Email  : {sender_email}\n"
+            f"Preview: {reply_snippet[:100]}"
+        )
     try:
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            log.info(f"WhatsApp notification sent to Rishav for: {school_name}")
+        resp = requests.post(
+            f"https://api.ultramsg.com/{ULTRAMSG_INSTANCE_ID}/messages/chat",
+            json={
+                "token": ULTRAMSG_TOKEN,
+                "to":    RISHAV_PHONE,
+                "body":  message
+            },
+            timeout=15
+        )
+        if resp.status_code == 200:
+            log.info(f"  WhatsApp sent for: {school_name}")
             return True
         else:
-            log.warning(f"CallMeBot returned status {response.status_code}: {response.text}")
+            log.warning(f"  UltraMsg returned {resp.status_code}: {resp.text[:100]}")
             return False
+    except requests.exceptions.Timeout:
+        log.error("  UltraMsg request timed out")
+        return False
     except requests.exceptions.RequestException as e:
-        log.error(f"Failed to send WhatsApp notification: {e}")
+        log.error(f"  UltraMsg failed: {e}")
         return False
 
 
-# ──────────────────────────────────────────────
-# IMAP: Connect to Gmail inbox
-# ──────────────────────────────────────────────
 def connect_to_gmail() -> imaplib.IMAP4_SSL:
-    """
-    Connect to Gmail using IMAP over SSL.
-    Returns an authenticated IMAP4_SSL connection object.
-    """
-    log.info("Connecting to Gmail IMAP...")
+    log.info("Connecting to Gmail IMAP (imap.gmail.com:993)...")
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com", 993)
         mail.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-        log.info(" Connected and authenticated to Gmail IMAP")
+        log.info("Connected and authenticated")
         return mail
     except imaplib.IMAP4.error as e:
-        log.error(f" IMAP login failed: {e}")
+        log.error(f"IMAP login failed: {e}")
+        log.error("Fix: Enable IMAP in Gmail settings. Check App Password in .env.")
+        raise
+    except Exception as e:
+        log.error(f"Unexpected Gmail connection error: {e}")
         raise
 
 
-# ──────────────────────────────────────────────
-# CORE: Check inbox for new replies
-# ──────────────────────────────────────────────
-def check_for_replies():
-    """
-    Main function:
-      1. Connects to Gmail via IMAP
-      2. Fetches all UNSEEN (unread) emails in INBOX
-      3. Matches sender email to leads in Google Sheets
-      4. Updates Sheets and sends WhatsApp notification if matched
-    """
-    log.info("=" * 60)
-    log.info("Starting reply detection check...")
-    log.info("=" * 60)
+# def build_lead_lookup() -> dict:
+#     try:
+#         all_leads = sheets.get_all_leads()
+#         log.info(f"Loaded {len(all_leads)} leads from Google Sheets")
+#     except Exception as e:
+#         log.error(f"Failed to load leads: {e}")
+#         raise
 
-    # Step A: Load all current leads from Google Sheets
-    # Shreyas's get_all_leads() returns a list of dicts like:
-    # [{"lead_id": "...", "email": "...", "school_name": "...", "reply_received": "Y"/"", ...}, ...]
+#     lookup = {}
+#     for lead in all_leads:
+#         addr         = lead.get("email", "").strip().lower()
+#         email_sent   = lead.get("email_sent", "").strip().upper()
+#         reply_recv   = lead.get("reply_received", "").strip().upper()
+#         unsubscribed = lead.get("unsubscribed", "").strip().upper()
+#         if addr and email_sent == "Y" and reply_recv != "Y" and unsubscribed != "Y":
+#             lookup[addr] = lead
+
+#     log.info(f"Watching {len(lookup)} emailed leads for replies")
+#     return lookup
+
+def build_lead_lookup() -> dict:
     try:
         all_leads = sheets.get_all_leads()
         log.info(f"Loaded {len(all_leads)} leads from Google Sheets")
     except Exception as e:
-        log.error(f" Could not load leads from Google Sheets: {e}")
-        return
+        log.error(f"Failed to load leads: {e}")
+        raise
 
-    # Build a lookup dict: email_address -> lead row
-    # Only include leads who have been emailed but NOT yet replied
-    lead_lookup = {}
+    lookup = {}
     for lead in all_leads:
-        email_addr = lead.get("email", "").strip().lower()
-        email_sent = lead.get("email_sent", "").strip().upper()
-        reply_received = lead.get("reply_received", "").strip().upper()
+        addr         = lead.get("email", "").strip().lower()
+        email_sent   = lead.get("email_sent_at", "").strip()
+        replied      = lead.get("replied", False)
 
-        # Only track leads who were emailed and haven't replied yet
-        if email_addr and email_sent == "Y" and reply_received != "Y":
-            lead_lookup[email_addr] = lead
+        if addr and email_sent and not replied:
+            lookup[addr] = lead
 
-    log.info(f"🔍 Watching for replies from {len(lead_lookup)} emailed leads")
+    log.info(f"Watching {len(lookup)} emailed leads for replies")
+    return lookup
+
+
+def write_summary_line(unread: int, matched: int, updated: int,
+                        wa_sent: int, unsub_count: int):
+    summary_path = os.path.join(log_dir, "replies_summary.log")
+    line = (
+        f"{date.today().isoformat()},"
+        f"{unread},{matched},{updated},{wa_sent},{unsub_count}\n"
+    )
+    try:
+        with open(summary_path, "a") as f:
+            f.write(line)
+        log.info("Summary written to logs/replies_summary.log")
+    except Exception as e:
+        log.error(f"Could not write summary line: {e}")
+
+
+def check_for_replies():
+    log.info("=" * 60)
+    log.info("KALNET AI-5 — Reply Detection Run")
+    log.info(f"Date: {date.today().isoformat()}")
+    log.info("=" * 60)
+
+    try:
+        lead_lookup = build_lead_lookup()
+    except Exception:
+        log.error("Aborting — could not load leads.")
+        return
 
     if not lead_lookup:
-        log.info("No leads to watch for replies. Exiting.")
+        log.info("No leads awaiting replies. Nothing to do.")
+        write_summary_line(0, 0, 0, 0, 0)
         return
 
-    # Step B: Connect to Gmail and fetch UNSEEN emails
     try:
         mail = connect_to_gmail()
     except Exception:
         log.error("Aborting — could not connect to Gmail.")
         return
 
+    total_unread  = 0
+    total_matched = 0
+    total_updated = 0
+    total_wa_sent = 0
+    total_unsub   = 0
+
     try:
         mail.select("INBOX")
 
-        # Search for UNSEEN (unread) emails only
-        status, message_ids = mail.search(None, "UNSEEN")
-
+        status, data = mail.search(None, "UNSEEN")
         if status != "OK":
-            log.warning("IMAP search returned non-OK status.")
-            mail.logout()
+            log.warning(f"IMAP search status: {status}")
             return
 
-        id_list = message_ids[0].split()
-        log.info(f"📬 Found {len(id_list)} unread email(s) in inbox")
+        msg_ids      = data[0].split()
+        total_unread = len(msg_ids)
+        log.info(f"Found {total_unread} unread email(s)")
 
-        if not id_list:
-            log.info("No new emails. Done.")
-            mail.logout()
+        if not msg_ids:
+            log.info("No new emails. Run complete.")
             return
 
-        # Step C: Process each unread email
-        matched_count = 0
-
-        for msg_id in id_list:
+        for msg_id in msg_ids:
             try:
-                # Fetch the full email
                 status, msg_data = mail.fetch(msg_id, "(RFC822)")
 
                 if status != "OK" or not msg_data or not msg_data[0]:
-                    log.warning(f"Skipping message ID {msg_id} — fetch failed")
+                    log.warning(f"Could not fetch message {msg_id} — skipping")
                     continue
 
-                raw_email = msg_data[0][1]
-                msg = email.message_from_bytes(raw_email)
+                msg = email.message_from_bytes(msg_data[0][1])
 
-                # Extract sender's email address
                 from_header = msg.get("From", "")
-                sender_email = email.utils.parseaddr(from_header)[1].strip().lower()
+                _, sender   = email.utils.parseaddr(from_header)
+                sender      = sender.strip().lower()
+                subject     = decode_subject(msg.get("Subject", ""))
 
-                subject = decode_subject(msg.get("Subject", ""))
-                log.info(f"📧 Processing email from: {sender_email} | Subject: {subject}")
+                log.info(f"Processing: {sender} | {subject}")
 
-                # Step D: Check if sender matches a lead we're tracking
-                if sender_email not in lead_lookup:
-                    log.info(f"   Not a tracked lead. Skipping.")
+                if sender not in lead_lookup:
+                    log.info("  Not a tracked lead — skipping")
                     continue
 
-                lead = lead_lookup[sender_email]
-                lead_id = lead.get("lead_id") or lead.get("row_number")  # depends on Shreyas's implementation
-                school_name = lead.get("school_name", sender_email)
+                total_matched += 1
+                lead        = lead_lookup[sender]
+                lead_id     = lead.get("lead_id") or lead.get("row_number")
+                school_name = lead.get("school_name", sender)
 
-                log.info(f" MATCH FOUND: {school_name} ({sender_email})")
+                log.info(f"  MATCH: {school_name}")
 
-                # Extract reply snippet (first 200 chars of body)
-                reply_snippet = extract_body(msg)
-                log.info(f"   Reply preview: {reply_snippet[:80]}...")
+                snippet = extract_body(msg)
+                log.info(f"  Snippet: {snippet[:80]}...")
 
-                # Step E: Update Google Sheets via Shreyas's module
-                today_str = date.today().isoformat()  # e.g. "2026-04-25"
-                try:
-                    sheets.mark_replied(lead_id, reply_snippet)
-                    log.info(f"   ✅ Sheets updated: reply_received=Y, reply_date={today_str}")
-                except Exception as e:
-                    log.error(f"   ❌ Failed to update Sheets for {school_name}: {e}")
-                    # Still try to send WhatsApp even if Sheets fails
+                if is_unsubscribe_request(subject, snippet):
+                    log.info(f"  UNSUBSCRIBE detected for {school_name}")
+                    try:
+                        sheets.mark_unsubscribed(lead_id)
+                        total_updated += 1
+                        total_unsub   += 1
+                        log.info("  Sheets updated: unsubscribed=Y")
+                    except Exception as e:
+                        log.error(f"  Failed to mark unsubscribed: {e}")
 
-                # Step F: Send WhatsApp notification to Rishav
-                send_whatsapp_notification(school_name, sender_email, reply_snippet)
+                    wa_ok = send_whatsapp_notification(
+                        school_name, sender, snippet, is_unsub=True
+                    )
+                    if wa_ok:
+                        total_wa_sent += 1
 
-                matched_count += 1
+                else:
+                    try:
+                        sheets.mark_replied(lead_id, snippet)
+                        total_updated += 1
+                        log.info("  Sheets updated: reply_received=Y")
+                    except Exception as e:
+                        log.error(f"  Failed to update Sheets: {e}")
 
-                # Remove from lookup so we don't process duplicates in same run
-                del lead_lookup[sender_email]
+                    wa_ok = send_whatsapp_notification(
+                        school_name, sender, snippet, is_unsub=False
+                    )
+                    if wa_ok:
+                        total_wa_sent += 1
 
-                # Small delay between processing emails — be kind to APIs
+                del lead_lookup[sender]
                 time.sleep(2)
 
             except Exception as e:
-                log.error(f"❌ Error processing message {msg_id}: {e}")
+                log.error(f"Error processing message {msg_id}: {e}")
                 continue
 
-        log.info(f"\n📊 Summary: {matched_count} matched reply(ies) processed out of {len(id_list)} new email(s)")
-
     finally:
-        # Always logout cleanly
         try:
             mail.logout()
-            log.info("IMAP connection closed.")
+            log.info("IMAP connection closed")
         except Exception:
             pass
 
+    log.info("")
+    log.info("-" * 40)
+    log.info("RUN SUMMARY")
+    log.info(f"  Unread checked  : {total_unread}")
+    log.info(f"  Matched to leads: {total_matched}")
+    log.info(f"  Sheets updated  : {total_updated}")
+    log.info(f"  WhatsApp sent   : {total_wa_sent}")
+    log.info(f"  Unsubscribed    : {total_unsub}")
+    log.info("-" * 40)
 
-# ──────────────────────────────────────────────
-# ENTRY POINT
-# ──────────────────────────────────────────────
+    write_summary_line(
+        total_unread, total_matched,
+        total_updated, total_wa_sent, total_unsub
+    )
+
+
 if __name__ == "__main__":
-    """
-    Run this script directly:
-        python pipeline/check_replies.py
-
-    Or schedule it to run every hour using cron:
-        crontab -e
-        0 * * * * cd /path/to/kalnet-ai-5 && python pipeline/check_replies.py
-
-    Or use the scheduler below to loop every hour within one process.
-    Uncomment the loop below if you want it to run continuously.
-    """
-
-    # Option A: Run once (recommended for cron scheduling)
+    validate_env()
     check_for_replies()
 
-    # Option B: Run every hour in a loop (uncomment if not using cron)
+    # To run every hour in a loop instead of cron uncomment below:
     # while True:
+    #     validate_env()
     #     check_for_replies()
-    #     log.info("Sleeping for 1 hour before next check...")
-    #     time.sleep(3600)  # 3600 seconds = 1 hour 
-    # Last updated: 30 April 2026
+    #     log.info("Sleeping 1 hour...")
+    #     time.sleep(3600)

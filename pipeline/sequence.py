@@ -27,6 +27,8 @@ import logging
 import os
 import sys
 from datetime import date, timedelta
+from typing import List, Dict
+
  
 # --------------------------------------------------------------------------
 # Windows UTF-8 fix
@@ -92,7 +94,9 @@ EMAIL_BODIES = {
 # Core function
 # --------------------------------------------------------------------------
  
-def get_sequence_due_today(leads: list[dict]) -> list[dict]:
+
+
+def get_sequence_due_today(leads: List[Dict]) -> List[Dict]:
     """
     Evaluate every lead and return only those who should receive an email today.
  
@@ -106,7 +110,7 @@ def get_sequence_due_today(leads: list[dict]) -> list[dict]:
  
     Parameters
     ----------
-    leads : list[dict]
+    leads : List[Dict]
         Each dict must contain:
             lead_id       (str)  -- unique row identifier from Google Sheets
             name          (str)  -- prospect's full name
@@ -119,8 +123,8 @@ def get_sequence_due_today(leads: list[dict]) -> list[dict]:
  
     Returns
     -------
-    list[dict]
-        Each dict contains:
+    List[Dict]
+        Each Dict contains:
             lead_id      (str)
             name         (str)
             email        (str)
@@ -233,7 +237,7 @@ def get_sequence_due_today(leads: list[dict]) -> list[dict]:
 # Email content helper
 # --------------------------------------------------------------------------
  
-def get_email_content(lead: dict) -> dict:
+def get_email_content(lead: Dict) -> Dict:
     """
     Return the subject and body for a lead due for an email today.
  

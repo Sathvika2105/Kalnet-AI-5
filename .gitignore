@@ -1,2 +1,6 @@
 .env
 *.log
+
+config/*.json
+__pycache__/
+.ipynb_checkpoints/
