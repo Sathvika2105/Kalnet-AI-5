@@ -2,7 +2,8 @@ from datetime import datetime
 
 USE_MOCK_FOR_DEMO = False
 
-# DEMO / MOCK MODE 
+
+# DEMO / MOCK MODE
 if USE_MOCK_FOR_DEMO:
 
     from config.mock_google_sheets import MockClient as RealClient
@@ -12,8 +13,9 @@ if USE_MOCK_FOR_DEMO:
 
     client = authorize(None)
 
-    # sheet = client.open("Test_Emails_KALNET").sheet1
-    sheet = client.open_by_key("1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY").sheet1
+    sheet = client.open_by_key(
+        "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
+    ).sheet1
 
 
 # REAL GOOGLE SHEETS MODE
@@ -34,27 +36,34 @@ else:
 
     client = gspread.authorize(creds)
 
-    # sheet = client.open("Test_Emails_KALNET").sheet1
-    sheet = client.open_by_key("1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY").sheet1
+    sheet = client.open_by_key(
+        "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
+    ).sheet1
 
 
 # CLEAN LEAD DATA
 def clean_lead_data(lead):
 
     return {
-        "lead_id": str(lead.get("lead_id", "")).strip(),
+        "lead_id": str(
+            lead.get("lead_id", "")
+        ).strip(),
 
-        "name": str(lead.get("name", "")).strip(),
+        "name": str(
+            lead.get("name", "")
+        ).strip(),
 
-        "email": str(lead.get("email", "")).strip(),
+        "email": str(
+            lead.get("email", "")
+        ).strip(),
 
-        "company": str(lead.get("company", "")).strip(),
+        "company": str(
+            lead.get("company", "")
+        ).strip(),
 
-        # "email_sent_at": str(
-        #     lead.get("email_sent_at", "")
-        # ).strip(),
-
-        "email_sent_at": str(lead.get("email_sent_at", "")).strip().split(" ")[0].split("T")[0],
+        "email_sent_at": str(
+            lead.get("email_sent_at", "")
+        ).strip().split(" ")[0].split("T")[0],
 
         "sequence_step": int(
             lead.get("sequence_step", 0) or 0
@@ -62,7 +71,17 @@ def clean_lead_data(lead):
 
         "replied": str(
             lead.get("replied", "")
-        ).strip().upper() == "TRUE"
+        ).strip().upper() == "TRUE",
+
+        # NEW FIELD
+        "tier": str(
+            lead.get("tier", "")
+        ).strip(),
+
+        # NEW FIELD
+        "subject_line": str(
+            lead.get("subject_line", "")
+        ).strip()
     }
 
 
@@ -113,7 +132,12 @@ def get_lead_by_id(lead_id):
 
 
 # MARK EMAIL SENT
-def mark_email_sent(lead_id, sequence_step):
+def mark_email_sent(
+    lead_id,
+    sequence_step,
+    tier="",
+    subject_line=""
+):
 
     records = sheet.get_all_records()
 
@@ -132,6 +156,12 @@ def mark_email_sent(lead_id, sequence_step):
 
                 # Column 6 = sequence_step
                 sheet.update_cell(index, 6, sequence_step)
+
+                # Column 8 = tier
+                sheet.update_cell(index, 8, tier)
+
+                # Column 9 = subject_line
+                sheet.update_cell(index, 9, subject_line)
 
                 print(f"Updated lead {lead_id}")
 
