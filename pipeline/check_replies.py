@@ -169,6 +169,26 @@ def connect_to_gmail() -> imaplib.IMAP4_SSL:
         raise
 
 
+# def build_lead_lookup() -> dict:
+#     try:
+#         all_leads = sheets.get_all_leads()
+#         log.info(f"Loaded {len(all_leads)} leads from Google Sheets")
+#     except Exception as e:
+#         log.error(f"Failed to load leads: {e}")
+#         raise
+
+#     lookup = {}
+#     for lead in all_leads:
+#         addr         = lead.get("email", "").strip().lower()
+#         email_sent   = lead.get("email_sent", "").strip().upper()
+#         reply_recv   = lead.get("reply_received", "").strip().upper()
+#         unsubscribed = lead.get("unsubscribed", "").strip().upper()
+#         if addr and email_sent == "Y" and reply_recv != "Y" and unsubscribed != "Y":
+#             lookup[addr] = lead
+
+#     log.info(f"Watching {len(lookup)} emailed leads for replies")
+#     return lookup
+
 def build_lead_lookup() -> dict:
     try:
         all_leads = sheets.get_all_leads()
@@ -180,10 +200,10 @@ def build_lead_lookup() -> dict:
     lookup = {}
     for lead in all_leads:
         addr         = lead.get("email", "").strip().lower()
-        email_sent   = lead.get("email_sent", "").strip().upper()
-        reply_recv   = lead.get("reply_received", "").strip().upper()
-        unsubscribed = lead.get("unsubscribed", "").strip().upper()
-        if addr and email_sent == "Y" and reply_recv != "Y" and unsubscribed != "Y":
+        email_sent   = lead.get("email_sent_at", "").strip()
+        replied      = lead.get("replied", False)
+
+        if addr and email_sent and not replied:
             lookup[addr] = lead
 
     log.info(f"Watching {len(lookup)} emailed leads for replies")

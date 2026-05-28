@@ -50,9 +50,11 @@ def clean_lead_data(lead):
 
         "company": str(lead.get("company", "")).strip(),
 
-        "email_sent_at": str(
-            lead.get("email_sent_at", "")
-        ).strip(),
+        # "email_sent_at": str(
+        #     lead.get("email_sent_at", "")
+        # ).strip(),
+
+        "email_sent_at": str(lead.get("email_sent_at", "")).strip().split(" ")[0].split("T")[0],
 
         "sequence_step": int(
             lead.get("sequence_step", 0) or 0
@@ -147,7 +149,7 @@ def mark_email_sent(lead_id, sequence_step):
 
 
 # MARK REPLIED
-def mark_replied(lead_id):
+def mark_replied(lead_id, snippet=None):
 
     records = sheet.get_all_records()
 
