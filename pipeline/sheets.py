@@ -45,6 +45,7 @@ else:
 def clean_lead_data(lead):
 
     return {
+
         "lead_id": str(
             lead.get("lead_id", "")
         ).strip(),
@@ -81,7 +82,12 @@ def clean_lead_data(lead):
         # NEW FIELD
         "subject_line": str(
             lead.get("subject_line", "")
-        ).strip()
+        ).strip(),
+
+        # NEW FIELD
+        "opt_out": str(
+            lead.get("opt_out", "")
+        ).strip().upper() == "TRUE"
     }
 
 
@@ -110,9 +116,15 @@ def get_pending_leads():
 
     for lead in leads:
 
-        if not lead["replied"]:
+        # Skip replied leads
+        if lead["replied"]:
+            continue
 
-            pending.append(lead)
+        # Skip unsubscribed / opted out leads
+        if lead["opt_out"]:
+            continue
+
+        pending.append(lead)
 
     return pending
 
@@ -179,7 +191,11 @@ def mark_email_sent(
 
 
 # MARK REPLIED
-def mark_replied(lead_id, snippet=None):
+def mark_replied(
+    lead_id,
+    snippet=None,
+    is_opt_out=False
+):
 
     records = sheet.get_all_records()
 
@@ -191,6 +207,13 @@ def mark_replied(lead_id, snippet=None):
 
                 # Column 7 = replied
                 sheet.update_cell(index, 7, "TRUE")
+
+                # Column 10 = opt_out
+                sheet.update_cell(
+                    index,
+                    10,
+                    str(is_opt_out).upper()
+                )
 
                 print(f"Lead {lead_id} marked as replied")
 
