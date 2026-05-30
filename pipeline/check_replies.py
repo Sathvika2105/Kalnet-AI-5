@@ -169,26 +169,6 @@ def connect_to_gmail() -> imaplib.IMAP4_SSL:
         raise
 
 
-# def build_lead_lookup() -> dict:
-#     try:
-#         all_leads = sheets.get_all_leads()
-#         log.info(f"Loaded {len(all_leads)} leads from Google Sheets")
-#     except Exception as e:
-#         log.error(f"Failed to load leads: {e}")
-#         raise
-
-#     lookup = {}
-#     for lead in all_leads:
-#         addr         = lead.get("email", "").strip().lower()
-#         email_sent   = lead.get("email_sent", "").strip().upper()
-#         reply_recv   = lead.get("reply_received", "").strip().upper()
-#         unsubscribed = lead.get("unsubscribed", "").strip().upper()
-#         if addr and email_sent == "Y" and reply_recv != "Y" and unsubscribed != "Y":
-#             lookup[addr] = lead
-
-#     log.info(f"Watching {len(lookup)} emailed leads for replies")
-#     return lookup
-
 def build_lead_lookup() -> dict:
     try:
         all_leads = sheets.get_all_leads()
@@ -304,7 +284,7 @@ def check_for_replies():
                 if is_unsubscribe_request(subject, snippet):
                     log.info(f"  UNSUBSCRIBE detected for {school_name}")
                     try:
-                        sheets.mark_unsubscribed(lead_id)
+                        sheets.mark_unsubscribed(sender)
                         total_updated += 1
                         total_unsub   += 1
                         log.info("  Sheets updated: unsubscribed=Y")
@@ -365,9 +345,10 @@ if __name__ == "__main__":
     validate_env()
     check_for_replies()
 
-    # To run every hour in a loop instead of cron uncomment below:
-    # while True:
-    #     validate_env()
-    #     check_for_replies()
-    #     log.info("Sleeping 1 hour...")
-    #     time.sleep(3600)
+# while True:
+#     validate_env()
+#     check_for_replies()
+#     log.info("Sleeping 1 hour...")
+#     time.sleep(3600)
+
+   

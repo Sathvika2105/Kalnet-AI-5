@@ -241,7 +241,7 @@ def step_4_send_emails(due_leads):
                 
                 # Update Google Sheets
                 try:
-                    sheets.mark_email_sent(lead_id, email_number)
+                    sheets.mark_email_sent(lead_id,email_number,tier="1",subject_line=email_content["subject"])
                     log.info(f"  ✅ Sheets updated with send status")
                     sent_count += 1
                 except Exception as e:
@@ -288,8 +288,8 @@ def step_5_generate_analytics():
                 "email_sent_at": lead.get("email_sent_at"),
                 "sequence_step": lead.get("sequence_step"),
                 "replied": lead.get("replied"),
-                "tier": 1,  # Default tier
-                "subject_line": "Follow-up email"
+                "tier": lead.get("tier", ""),
+                "subject_line": lead.get("subject_line", "")
             })
         
         # Generate metrics

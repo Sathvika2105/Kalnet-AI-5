@@ -2,7 +2,8 @@ from datetime import datetime
 
 USE_MOCK_FOR_DEMO = False
 
-# DEMO / MOCK MODE 
+
+# DEMO / MOCK MODE
 if USE_MOCK_FOR_DEMO:
 
     from config.mock_google_sheets import MockClient as RealClient
@@ -12,8 +13,9 @@ if USE_MOCK_FOR_DEMO:
 
     client = authorize(None)
 
-    # sheet = client.open("Test_Emails_KALNET").sheet1
-    sheet = client.open_by_key("1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY").sheet1
+    sheet = client.open_by_key(
+        "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
+    ).sheet1
 
 
 # REAL GOOGLE SHEETS MODE
@@ -34,27 +36,35 @@ else:
 
     client = gspread.authorize(creds)
 
-    # sheet = client.open("Test_Emails_KALNET").sheet1
-    sheet = client.open_by_key("1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY").sheet1
+    sheet = client.open_by_key(
+        "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
+    ).sheet1
 
 
 # CLEAN LEAD DATA
 def clean_lead_data(lead):
 
     return {
-        "lead_id": str(lead.get("lead_id", "")).strip(),
 
-        "name": str(lead.get("name", "")).strip(),
+        "lead_id": str(
+            lead.get("lead_id", "")
+        ).strip(),
 
-        "email": str(lead.get("email", "")).strip(),
+        "name": str(
+            lead.get("name", "")
+        ).strip(),
 
-        "company": str(lead.get("company", "")).strip(),
+        "email": str(
+            lead.get("email", "")
+        ).strip(),
 
-        # "email_sent_at": str(
-        #     lead.get("email_sent_at", "")
-        # ).strip(),
+        "company": str(
+            lead.get("company", "")
+        ).strip(),
 
-        "email_sent_at": str(lead.get("email_sent_at", "")).strip().split(" ")[0].split("T")[0],
+        "email_sent_at": str(
+            lead.get("email_sent_at", "")
+        ).strip().split(" ")[0].split("T")[0],
 
         "sequence_step": int(
             lead.get("sequence_step", 0) or 0
@@ -62,6 +72,21 @@ def clean_lead_data(lead):
 
         "replied": str(
             lead.get("replied", "")
+        ).strip().upper() == "TRUE",
+
+        # NEW FIELD
+        "tier": str(
+            lead.get("tier", "")
+        ).strip(),
+
+        # NEW FIELD
+        "subject_line": str(
+            lead.get("subject_line", "")
+        ).strip(),
+
+        # NEW FIELD
+        "opt_out": str(
+            lead.get("opt_out", "")
         ).strip().upper() == "TRUE"
     }
 
@@ -91,9 +116,15 @@ def get_pending_leads():
 
     for lead in leads:
 
-        if not lead["replied"]:
+        # Skip replied leads
+        if lead["replied"]:
+            continue
 
-            pending.append(lead)
+        # Skip unsubscribed / opted out leads
+        if lead["opt_out"]:
+            continue
+
+        pending.append(lead)
 
     return pending
 
@@ -113,7 +144,12 @@ def get_lead_by_id(lead_id):
 
 
 # MARK EMAIL SENT
-def mark_email_sent(lead_id, sequence_step):
+def mark_email_sent(
+    lead_id,
+    sequence_step,
+    tier="",
+    subject_line=""
+):
 
     records = sheet.get_all_records()
 
@@ -133,6 +169,12 @@ def mark_email_sent(lead_id, sequence_step):
                 # Column 6 = sequence_step
                 sheet.update_cell(index, 6, sequence_step)
 
+                # Column 8 = tier
+                sheet.update_cell(index, 8, tier)
+
+                # Column 9 = subject_line
+                sheet.update_cell(index, 9, subject_line)
+
                 print(f"Updated lead {lead_id}")
 
                 return True
@@ -149,7 +191,11 @@ def mark_email_sent(lead_id, sequence_step):
 
 
 # MARK REPLIED
-def mark_replied(lead_id, snippet=None):
+def mark_replied(
+    lead_id,
+    snippet=None,
+    is_opt_out=False
+):
 
     records = sheet.get_all_records()
 
@@ -161,6 +207,13 @@ def mark_replied(lead_id, snippet=None):
 
                 # Column 7 = replied
                 sheet.update_cell(index, 7, "TRUE")
+
+                # Column 10 = opt_out
+                sheet.update_cell(
+                    index,
+                    10,
+                    str(is_opt_out).upper()
+                )
 
                 print(f"Lead {lead_id} marked as replied")
 
@@ -175,3 +228,22 @@ def mark_replied(lead_id, snippet=None):
     print("Lead not found")
 
     return False
+
+
+def mark_unsubscribed(email: str) -> bool:
+    """
+    Finds the lead row by email and sets opt_out = TRUE in column J (10).
+    Returns True on success, False on failure.
+    """
+    try:
+        records = sheet.get_all_records()
+        for i, row in enumerate(records, start=2):  # row 1 = header
+            if row.get("email", "").strip().lower() == email.strip().lower():
+                sheet.update_cell(i, 10, "TRUE")  # column J = opt_out
+                print(f"  Marked {email} as Unsubscribed (opt_out=TRUE) in Sheets")
+                return True
+        print(f"  Email {email} not found in sheet for unsubscribe")
+        return False
+    except Exception as e:
+        print(f"  mark_unsubscribed failed: {e}")
+        return False
