@@ -2,7 +2,7 @@ name: Daily Email Pipeline
 
 on:
   schedule:
-    - cron: '*/5 * * * *'  
+    - cron: '30 3 * * *'  
   workflow_dispatch:
 
 jobs:
