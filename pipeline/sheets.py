@@ -87,7 +87,12 @@ def clean_lead_data(lead):
         # NEW FIELD
         "opt_out": str(
             lead.get("opt_out", "")
-        ).strip().upper() == "TRUE"
+        ).strip().upper() == "TRUE",
+
+        # NEW FIELD
+        "reply_snippet": str(
+            lead.get("reply_snippet", "")
+        ).strip()
     }
 
 
@@ -214,6 +219,10 @@ def mark_replied(
                     10,
                     str(is_opt_out).upper()
                 )
+
+                # Column 11 = reply_snippet
+                if snippet:
+                    sheet.update_cell(index, 11, snippet[:500])
 
                 print(f"Lead {lead_id} marked as replied")
 

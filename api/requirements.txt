@@ -1,9 +1,3 @@
-gspread
-oauth2client
-pandas
-python-dotenv
-requests
-streamlit
 fastapi
 uvicorn[standard]
 python-jose[cryptography]

@@ -14,10 +14,11 @@ class MockWorksheet:
         data_index = row - 2
         if 0 <= data_index < len(self.data):
             col_names = ['lead_id', 'name', 'email', 'company', 'email_sent_at', 
-                        'sequence_step', 'replied']
-            field = col_names[col - 1]
-            self.data[data_index][field] = value
-            print(f"MOCK: Updated cell ({row}, {col}) with value: {value}")
+                        'sequence_step', 'replied', 'tier', 'subject_line', 'opt_out']
+            if col - 1 < len(col_names):
+                field = col_names[col - 1]
+                self.data[data_index][field] = value
+                print(f"MOCK: Updated cell ({row}, {col}) with value: {value}")
 
 class MockClient:
     def __init__(self):
@@ -30,16 +31,22 @@ class MockClient:
                 "company": "Tech Corp",
                 "email_sent_at": "2024-01-15",
                 "sequence_step": 1,
-                "replied": "FALSE"
+                "replied": "FALSE",
+                "tier": "1",
+                "subject_line": "Partnership Opportunity",
+                "opt_out": "FALSE"
             },
             {
                 "lead_id": "1002",
                 "name": "Sarah Johnson",
                 "email": "sarah@example.com",
                 "company": "Innovate Ltd",
-                "email_sent_at": "",
+                "email_sent_at": "2024-01-16",
                 "sequence_step": 0,
-                "replied": "FALSE"
+                "replied": "FALSE",
+                "tier": "2",
+                "subject_line": "Quick Question",
+                "opt_out": "FALSE"
             },
             {
                 "lead_id": "1003",
@@ -48,7 +55,70 @@ class MockClient:
                 "company": "Global Solutions",
                 "email_sent_at": "2024-01-14",
                 "sequence_step": 2,
-                "replied": "TRUE"
+                "replied": "TRUE",
+                "tier": "1",
+                "subject_line": "Partnership Opportunity",
+                "opt_out": "FALSE"
+            },
+            {
+                "lead_id": "1004",
+                "name": "Emily Davis",
+                "email": "emily@startup.io",
+                "company": "StartupIO",
+                "email_sent_at": "2024-01-13",
+                "sequence_step": 3,
+                "replied": "FALSE",
+                "tier": "3",
+                "subject_line": "Final Follow-up",
+                "opt_out": "TRUE"
+            },
+            {
+                "lead_id": "1005",
+                "name": "Robert Wilson",
+                "email": "robert@bigco.com",
+                "company": "BigCo Inc",
+                "email_sent_at": "2024-01-17",
+                "sequence_step": 0,
+                "replied": "FALSE",
+                "tier": "1",
+                "subject_line": "Quick Question",
+                "opt_out": "FALSE"
+            },
+            {
+                "lead_id": "1006",
+                "name": "Lisa Anderson",
+                "email": "lisa@agency.co",
+                "company": "Agency Co",
+                "email_sent_at": "2024-01-12",
+                "sequence_step": 1,
+                "replied": "TRUE",
+                "tier": "2",
+                "subject_line": "Partnership Opportunity",
+                "opt_out": "FALSE"
+            },
+            {
+                "lead_id": "1007",
+                "name": "David Chen",
+                "email": "david@techfirm.com",
+                "company": "TechFirm",
+                "email_sent_at": "",
+                "sequence_step": 0,
+                "replied": "FALSE",
+                "tier": "",
+                "subject_line": "",
+                "opt_out": "FALSE"
+            },
+            {
+                "lead_id": "1008",
+                "name": "Anna Martinez",
+                "email": "anna@designlab.com",
+                "company": "DesignLab",
+                "email_sent_at": "2024-01-11",
+                "sequence_step": 2,
+                "replied": "FALSE",
+                "tier": "1",
+                "subject_line": "Final Follow-up",
+                "opt_out": "FALSE"
             }
         ]
     

@@ -4,3 +4,6 @@
 config/*.json
 __pycache__/
 .ipynb_checkpoints/
+api/dashboard.db
+frontend/dist/
+frontend/node_modules/
