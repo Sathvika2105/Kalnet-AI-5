@@ -70,6 +70,10 @@ Kalnet-AI-5/
 - Added `reply_snippet` column (col K) to Google Sheets for storing reply text
 - `mark_replied()` now saves the reply snippet to the sheet
 
+### Bug Fixes
+- **Date format parsing** — `normalize_date()` added to handle MM/DD/YYYY dates from Google Sheets (Python's `date.fromisoformat()` only accepts YYYY-MM-DD)
+- **Sequence day matching** — Changed `days_elapsed == 5/10` to `days_elapsed >= 5/10` so follow-up emails fire even if the pipeline misses the exact scheduled day
+
 ## How to Run
 
 **One-click launcher:**
