@@ -200,10 +200,10 @@ def get_sequence_due_today(leads: List[Dict]) -> List[Dict]:
         days_elapsed = (today - sent_date).days
  
         # -- Sequence decision: day AND step must both match ---------------
-        if days_elapsed == 5 and sequence_step == 1:
+        if days_elapsed >= 5 and sequence_step == 1:
             email_number = 2
- 
-        elif days_elapsed == 10 and sequence_step == 2:
+
+        elif days_elapsed >= 10 and sequence_step == 2:
             email_number = 3
  
         else:

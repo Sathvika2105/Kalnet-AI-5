@@ -1,4 +1,5 @@
 from datetime import datetime
+import re
 
 USE_MOCK_FOR_DEMO = False
 
@@ -42,6 +43,21 @@ else:
 
 
 # CLEAN LEAD DATA
+def normalize_date(raw: str) -> str:
+    """Convert any common date format to YYYY-MM-DD."""
+    raw = raw.strip().split(" ")[0].split("T")[0]
+    if not raw:
+        return ""
+    # Already YYYY-MM-DD
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
+        return raw
+    # MM/DD/YYYY or M/D/YYYY
+    m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", raw)
+    if m:
+        return f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
+    return raw
+
+
 def clean_lead_data(lead):
 
     return {
@@ -62,9 +78,9 @@ def clean_lead_data(lead):
             lead.get("company", "")
         ).strip(),
 
-        "email_sent_at": str(
+        "email_sent_at": normalize_date(
             lead.get("email_sent_at", "")
-        ).strip().split(" ")[0].split("T")[0],
+        ),
 
         "sequence_step": int(
             lead.get("sequence_step", 0) or 0
