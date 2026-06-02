@@ -237,8 +237,9 @@ def check_for_replies():
     try:
         mail.select("INBOX")
 
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-        status, data = mail.search(None, f"SINCE {yesterday}")
+        yesterday = date.today() - timedelta(days=1)
+        imap_date = yesterday.strftime("%d-%b-%Y")
+        status, data = mail.search(None, f"SINCE {imap_date}")
         if status != "OK":
             log.warning(f"IMAP search status: {status}")
             return
@@ -246,7 +247,7 @@ def check_for_replies():
         raw_ids = data[0] if data and data[0] else b""
         msg_ids = raw_ids.split()
         total_found = len(msg_ids)
-        log.info(f"Found {total_found} email(s) since {yesterday}")
+        log.info(f"Found {total_found} email(s) since {imap_date}")
 
         if not msg_ids:
             log.info("No new emails. Run complete.")
