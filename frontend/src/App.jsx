@@ -8,7 +8,6 @@ import Replies from './pages/Replies'
 import Analytics from './pages/Analytics'
 import SubjectLines from './pages/SubjectLines'
 import Settings from './pages/Settings'
-import SpamScore from './pages/SpamScore'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -34,7 +33,6 @@ export default function App() {
             <Route path="/replies" element={<Replies />} />
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/subject-lines" element={<SubjectLines />} />
-            <Route path="/spam-score" element={<SpamScore />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Routes>

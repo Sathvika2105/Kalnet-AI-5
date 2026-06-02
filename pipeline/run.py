@@ -223,7 +223,7 @@ def step_4_send_emails(due_leads):
                 # Update Google Sheets
                 try:
                     lead_tier = lead.get("tier", "1")
-                    sheets.mark_email_sent(lead_id, email_number, tier=lead_tier, subject_line=email_content["subject"], email_body=body)
+                    sheets.mark_email_sent(lead_id, email_number, tier=lead_tier, subject_line=email_content["subject"])
                     log.info(f"  ✅ Sheets updated with send status")
                     sent_count += 1
                 except Exception as e:

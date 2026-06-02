@@ -93,11 +93,6 @@ def clean_lead_data(lead):
         # NEW FIELD
         "reply_snippet": str(
             lead.get("reply_snippet", "")
-        ).strip(),
-
-        # NEW FIELD
-        "email_body": str(
-            lead.get("email_body", "")
         ).strip()
     }
 
@@ -159,8 +154,7 @@ def mark_email_sent(
     lead_id,
     sequence_step,
     tier="",
-    subject_line="",
-    email_body=""
+    subject_line=""
 ):
 
     records = sheet.get_all_records()
@@ -186,10 +180,6 @@ def mark_email_sent(
 
                 # Column 9 = subject_line
                 sheet.update_cell(index, 9, subject_line)
-
-                # Column 12 = email_body (for spam scoring)
-                if email_body:
-                    sheet.update_cell(index, 12, email_body)
 
                 logger.info(f"Updated lead {lead_id}")
 

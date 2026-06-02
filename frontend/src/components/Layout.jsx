@@ -2,7 +2,7 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
   LayoutDashboard, Users, MessageSquare, BarChart3,
-  Settings, LogOut, Mail, ShieldCheck
+  Settings, LogOut, Mail
 } from 'lucide-react'
 
 const navItems = [
@@ -11,7 +11,6 @@ const navItems = [
   { to: '/replies', icon: MessageSquare, label: 'Replies' },
   { to: '/analytics', icon: BarChart3, label: 'Analytics' },
   { to: '/subject-lines', icon: Mail, label: 'Sent Emails' },
-  { to: '/spam-score', icon: ShieldCheck, label: 'Spam Score' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 
