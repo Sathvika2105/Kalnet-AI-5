@@ -121,7 +121,23 @@ uvicorn api.app:app --reload --port 8000
 **Open:** http://localhost:8000
 **API Docs:** http://localhost:8000/docs
 
-**Important:** `SECRET_KEY` must be set in `.env`. Generate one with:
-```
+## Setup
+
+**1. Generate a SECRET_KEY and add it to `.env`:**
+```bash
+# Windows (PowerShell)
 python -c "import secrets; print(secrets.token_hex(32))"
+```
+Then add the output to `.env`:
+```
+SECRET_KEY=<paste_the_key_here>
+```
+
+**2. Run the dashboard:**
+```bash
+start-dashboard.bat
+```
+Or manually:
+```bash
+uvicorn api.app:app --reload --port 8000
 ```
