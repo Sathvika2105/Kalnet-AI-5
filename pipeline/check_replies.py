@@ -272,6 +272,10 @@ def check_for_replies():
 
                 if sender not in lead_lookup:
                     log.info("  Not a tracked lead — skipping")
+                    try:
+                        mail.store(msg_id, "+FLAGS", "\\Deleted")
+                    except Exception:
+                        pass
                     continue
 
                 total_matched += 1
@@ -314,12 +318,23 @@ def check_for_replies():
                     if wa_ok:
                         total_wa_sent += 1
 
+                try:
+                    mail.store(msg_id, "+FLAGS", "\\Deleted")
+                    log.info("  Archived from INBOX")
+                except Exception as e:
+                    log.warning(f"  Could not archive email: {e}")
+
                 del lead_lookup[sender]
                 time.sleep(2)
 
             except Exception as e:
                 log.error(f"Error processing message {msg_id}: {e}")
                 continue
+
+        try:
+            mail.expunge()
+        except Exception:
+            pass
 
     finally:
         try:
