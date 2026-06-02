@@ -58,7 +58,7 @@ Kalnet-AI-5/
 - **Replies** — Reply cards with positive/unsubscribed filters
 - **Analytics** — Charts for sequence steps and tier distribution
 - **Sent Emails** — Table showing what was sent (name, subject, email type, datetime, status) + subject line performance ranking, sorted by timestamp
-- **Settings** — Pipeline config editor, Run Pipeline button with status feedback, log viewer (pipeline, email, replies, sequence, replies_summary)
+- **Settings** — Pipeline config editor, Run Pipeline button with status feedback, log viewer (pipeline, email)
 - **Auto-refresh** — All pages poll every 30 seconds, manual refresh button available
 - **Dark theme** — Professional dark UI with Tailwind CSS
 
@@ -86,10 +86,11 @@ Kalnet-AI-5/
 
 ### Logic Bug Fixes
 - **Double emoji replacement** — Removed `ASCIIFormatter`, kept only `UTF8SafeStreamHandler`
-- **Double logging** — Removed `basicConfig` from `send_email.py`, uses module logger
+- **Double logging** — Removed `logging.basicConfig` from `send_email.py`, `check_replies.py`, and `sequence.py` — all use module-level loggers that propagate to root logger
 - **Redundant Sheets API calls** — `step_5_generate_analytics()` now accepts optional leads param
 - **Missing `mail.close()`** — Added before `mail.logout()` in IMAP finally block
 - **`print()` → logger** — All `print()` calls in `sheets.py` and `check_replies.py` replaced with proper logging
+- **`mark_unsubscribed` duplicate email fix** — When two leads share the same email (e.g. lead_id 1 and 18 both `calm95743@gmail.com`), only the **newest** row is updated. The function iterates all rows to find the last match, then applies changes to that row only.
 
 ### Configuration
 - `start-dashboard.bat` uses `%~dp0` for relative paths (works from any directory)
@@ -99,7 +100,7 @@ Kalnet-AI-5/
 - GitHub Actions workflow uses separate `EMAIL_USER` secret
 
 ### Frontend
-- Log viewer dropdown includes `replies` and `sequence` logs
+- Log viewer simplified to pipeline and email only
 - Sent Emails table sorts by full timestamp (not just date)
 - Leads filter: "All Opt-out" removed (only Active / Opted Out)
 - Steps filter: Step 0 removed (only 1/2/3)
