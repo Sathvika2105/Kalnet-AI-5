@@ -6,7 +6,7 @@ import sys
 import time
 import logging
 import requests
-from datetime import date
+from datetime import date, timedelta
 from email.header import decode_header
 from dotenv import load_dotenv
 
@@ -228,7 +228,7 @@ def check_for_replies():
         log.error("Aborting — could not connect to Gmail.")
         return
 
-    total_unread  = 0
+    total_found  = 0
     total_matched = 0
     total_updated = 0
     total_wa_sent = 0
@@ -237,14 +237,16 @@ def check_for_replies():
     try:
         mail.select("INBOX")
 
-        status, data = mail.search(None, "UNSEEN")
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        status, data = mail.search(None, f"SINCE {yesterday}")
         if status != "OK":
             log.warning(f"IMAP search status: {status}")
             return
 
-        msg_ids      = data[0].split()
-        total_unread = len(msg_ids)
-        log.info(f"Found {total_unread} unread email(s)")
+        raw_ids = data[0] if data and data[0] else b""
+        msg_ids = raw_ids.split()
+        total_found = len(msg_ids)
+        log.info(f"Found {total_found} email(s) since {yesterday}")
 
         if not msg_ids:
             log.info("No new emails. Run complete.")
@@ -328,7 +330,7 @@ def check_for_replies():
     log.info("")
     log.info("-" * 40)
     log.info("RUN SUMMARY")
-    log.info(f"  Unread checked  : {total_unread}")
+    log.info(f"  Emails scanned  : {total_found}")
     log.info(f"  Matched to leads: {total_matched}")
     log.info(f"  Sheets updated  : {total_updated}")
     log.info(f"  WhatsApp sent   : {total_wa_sent}")
@@ -336,7 +338,7 @@ def check_for_replies():
     log.info("-" * 40)
 
     write_summary_line(
-        total_unread, total_matched,
+        total_found, total_matched,
         total_updated, total_wa_sent, total_unsub
     )
 
