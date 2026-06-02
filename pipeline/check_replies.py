@@ -43,15 +43,6 @@ UNSUBSCRIBE_TRIGGERS = [
 log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs')
 os.makedirs(log_dir, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.FileHandler(os.path.join(log_dir, 'replies.log')),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
 log = logging.getLogger("check_replies")
 
 

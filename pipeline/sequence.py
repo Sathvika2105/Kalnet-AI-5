@@ -40,14 +40,6 @@ if hasattr(sys.stdout, "reconfigure"):
 # Logging
 # --------------------------------------------------------------------------
 os.makedirs("logs", exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("logs/sequence.log", mode="a", encoding="utf-8"),
-    ],
-)
 logger = logging.getLogger(__name__)
  
  
