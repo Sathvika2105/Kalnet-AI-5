@@ -179,11 +179,11 @@ def build_lead_lookup() -> dict:
 
     lookup = {}
     for lead in all_leads:
-        addr         = lead.get("email", "").strip().lower()
-        email_sent   = lead.get("email_sent_at", "").strip()
-        replied      = lead.get("replied", False)
+        addr = lead.get("email", "").strip().lower()
+        email_sent = lead.get("email_sent_at", "").strip()
+        opted_out = lead.get("opt_out", False)
 
-        if addr and email_sent and not replied:
+        if addr and email_sent and not opted_out:
             lookup[addr] = lead
 
     log.info(f"Watching {len(lookup)} emailed leads for replies")
@@ -253,6 +253,8 @@ def check_for_replies():
             log.info("No new emails. Run complete.")
             return
 
+        processed_senders = set()
+
         for msg_id in msg_ids:
             try:
                 status, msg_data = mail.fetch(msg_id, "(RFC822)")
@@ -270,7 +272,7 @@ def check_for_replies():
 
                 log.info(f"Processing: {sender} | {subject}")
 
-                if sender not in lead_lookup:
+                if sender not in lead_lookup or sender in processed_senders:
                     log.info("  Not a tracked lead — skipping")
                     try:
                         mail.store(msg_id, "+FLAGS", "\\Deleted")
@@ -288,7 +290,19 @@ def check_for_replies():
                 snippet = extract_body(msg)
                 log.info(f"  Snippet: {snippet[:80]}...")
 
-                if is_unsubscribe_request(subject, snippet):
+                is_unsub = is_unsubscribe_request(subject, snippet)
+                already_replied = lead.get("replied", False)
+
+                if already_replied and not is_unsub:
+                    log.info("  Already replied — skipping (not an unsubscribe)")
+                    try:
+                        mail.store(msg_id, "+FLAGS", "\\Deleted")
+                        log.info("  Archived from INBOX")
+                    except Exception:
+                        pass
+                    continue
+
+                if is_unsub:
                     log.info(f"  UNSUBSCRIBE detected for {school_name}")
                     try:
                         sheets.mark_unsubscribed(sender)
@@ -324,7 +338,7 @@ def check_for_replies():
                 except Exception as e:
                     log.warning(f"  Could not archive email: {e}")
 
-                del lead_lookup[sender]
+                processed_senders.add(sender)
                 time.sleep(2)
 
             except Exception as e:
