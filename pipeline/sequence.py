@@ -91,6 +91,28 @@ EMAIL_BODIES = {
  
  
 # --------------------------------------------------------------------------
+# Delay settings from Dashboard DB
+# --------------------------------------------------------------------------
+
+def _load_delay_settings() -> dict:
+    import sqlite3
+    db_path = os.path.join(os.path.dirname(__file__), '..', 'api', 'dashboard.db')
+    defaults = {'email_2_delay_days': 5, 'email_3_delay_days': 10}
+    if not os.path.exists(db_path):
+        return defaults
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT key, value FROM settings WHERE key LIKE 'email_%_delay_days'")
+        for key, val in cur.fetchall():
+            defaults[key] = int(val)
+        conn.close()
+    except Exception:
+        pass
+    return defaults
+
+
+# --------------------------------------------------------------------------
 # Core function
 # --------------------------------------------------------------------------
  
@@ -133,6 +155,9 @@ def get_sequence_due_today(leads: List[Dict]) -> List[Dict]:
     """
     today     = date.today()
     due_today = []
+    delays   = _load_delay_settings()
+    email_2_delay = delays.get('email_2_delay_days', 5)
+    email_3_delay = delays.get('email_3_delay_days', 10)
  
     logger.info("Sequence check started -- %d leads -- date: %s", len(leads), today)
  
@@ -200,10 +225,10 @@ def get_sequence_due_today(leads: List[Dict]) -> List[Dict]:
         days_elapsed = (today - sent_date).days
  
         # -- Sequence decision: day AND step must both match ---------------
-        if days_elapsed >= 5 and sequence_step == 1:
+        if days_elapsed >= email_2_delay and sequence_step == 1:
             email_number = 2
 
-        elif days_elapsed >= 10 and sequence_step == 2:
+        elif days_elapsed >= email_3_delay and sequence_step == 2:
             email_number = 3
  
         else:

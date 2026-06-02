@@ -30,7 +30,7 @@ jobs:
         env:
           GMAIL_ADDRESS:         ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}  
-          EMAIL_USER:            ${{ secrets.GMAIL_ADDRESS }}
+          EMAIL_USER:            ${{ secrets.EMAIL_USER }}
           EMAIL_PASS:            ${{ secrets.EMAIL_PASS }}
           RISHAV_PHONE:          ${{ secrets.RISHAV_PHONE }}
           ULTRAMSG_INSTANCE_ID:  ${{ secrets.ULTRAMSG_INSTANCE_ID }}

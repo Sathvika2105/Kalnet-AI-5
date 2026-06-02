@@ -15,8 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import sheets
 except ImportError:
-    print("ERROR: Cannot import sheets.py")
-    print("Make sure sheets.py is in the same pipeline/ folder")
+    log.error("Cannot import sheets.py — make sure sheets.py is in the same pipeline/ folder")
     sys.exit(1)
 
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env')
@@ -64,8 +63,8 @@ def validate_env():
     if not ULTRAMSG_INSTANCE_ID: missing.append("ULTRAMSG_INSTANCE_ID")
     if not ULTRAMSG_TOKEN:       missing.append("ULTRAMSG_TOKEN")
     if missing:
-        print(f"ERROR: Missing in .env file: {', '.join(missing)}")
-        print("Fill these in your .env file and try again.")
+        log.error(f"Missing in .env file: {', '.join(missing)}")
+        log.error("Fill these in your .env file and try again.")
         sys.exit(1)
 
 
@@ -352,6 +351,7 @@ def check_for_replies():
 
     finally:
         try:
+            mail.close()
             mail.logout()
             log.info("IMAP connection closed")
         except Exception:

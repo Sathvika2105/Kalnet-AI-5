@@ -169,6 +169,8 @@ export default function Settings() {
             >
               <option value="pipeline">Pipeline Log</option>
               <option value="email">Email Log</option>
+              <option value="replies">Replies Log</option>
+              <option value="sequence">Sequence Log</option>
               <option value="replies_summary">Replies Summary</option>
             </select>
 

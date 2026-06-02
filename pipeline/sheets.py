@@ -1,45 +1,26 @@
 from datetime import datetime
 import re
+import logging
 
-USE_MOCK_FOR_DEMO = False
+logger = logging.getLogger(__name__)
 
+import gspread
+from google.oauth2.service_account import Credentials
 
-# DEMO / MOCK MODE
-if USE_MOCK_FOR_DEMO:
+scopes = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
 
-    from config.mock_google_sheets import MockClient as RealClient
-    from config.mock_google_sheets import mock_authorize as authorize
+creds = Credentials.from_service_account_file(
+    "config/service_account.json", scopes=scopes
+)
 
-    print("Running in DEMO MODE with mock data")
+client = gspread.authorize(creds)
 
-    client = authorize(None)
-
-    sheet = client.open_by_key(
-        "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
-    ).sheet1
-
-
-# REAL GOOGLE SHEETS MODE
-else:
-
-    import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
-
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
-
-    creds = ServiceAccountCredentials.from_json_keyfile_name(
-        "config/service_account.json",
-        scope
-    )
-
-    client = gspread.authorize(creds)
-
-    sheet = client.open_by_key(
-        "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
-    ).sheet1
+sheet = client.open_by_key(
+    "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
+).sheet1
 
 
 # CLEAN LEAD DATA
@@ -200,17 +181,17 @@ def mark_email_sent(
                 # Column 9 = subject_line
                 sheet.update_cell(index, 9, subject_line)
 
-                print(f"Updated lead {lead_id}")
+                logger.info(f"Updated lead {lead_id}")
 
                 return True
 
             except Exception as error:
 
-                print(f"Failed to update lead: {error}")
+                logger.error(f"Failed to update lead: {error}")
 
                 return False
 
-    print("Lead not found")
+    logger.warning("Lead not found")
 
     return False
 
@@ -244,17 +225,17 @@ def mark_replied(
                 if snippet:
                     sheet.update_cell(index, 11, snippet[:500])
 
-                print(f"Lead {lead_id} marked as replied")
+                logger.info(f"Lead {lead_id} marked as replied")
 
                 return True
 
             except Exception as error:
 
-                print(f"Failed to update reply status: {error}")
+                logger.error(f"Failed to update reply status: {error}")
 
                 return False
 
-    print("Lead not found")
+    logger.warning("Lead not found")
 
     return False
 
@@ -273,10 +254,10 @@ def mark_unsubscribed(email: str, snippet: str = "") -> bool:
                 sheet.update_cell(i, 10, "TRUE")     # column J = opt_out
                 if snippet:
                     sheet.update_cell(i, 11, snippet[:500])  # column K = reply_snippet
-                print(f"  Marked {email} as Unsubscribed (opt_out=TRUE) in Sheets")
+                logger.info(f"Marked {email} as Unsubscribed (opt_out=TRUE) in Sheets")
                 return True
-        print(f"  Email {email} not found in sheet for unsubscribe")
+        logger.warning(f"Email {email} not found in sheet for unsubscribe")
         return False
     except Exception as e:
-        print(f"  mark_unsubscribed failed: {e}")
+        logger.error(f"mark_unsubscribed failed: {e}")
         return False
