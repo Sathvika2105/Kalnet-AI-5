@@ -242,21 +242,21 @@ def mark_replied(
 
 def mark_unsubscribed(email: str, snippet: str = "") -> bool:
     """
-    Finds ALL lead rows by email and sets opt_out=TRUE, replied=TRUE,
-    and stores the reply snippet. Handles duplicate email rows.
-    Returns True if at least one row was updated.
+    Finds the LAST (newest) lead row by email and sets opt_out=TRUE,
+    replied=TRUE, and stores the reply snippet.
+    Returns True if a row was updated, False otherwise.
     """
     try:
         records = sheet.get_all_records()
-        updated = False
-        for i, row in enumerate(records, start=2):  # row 1 = header
+        last_row = None
+        for i, row in enumerate(records, start=2):
             if row.get("email", "").strip().lower() == email.strip().lower():
-                sheet.update_cell(i, 7, "TRUE")      # column G = replied
-                sheet.update_cell(i, 10, "TRUE")     # column J = opt_out
-                if snippet:
-                    sheet.update_cell(i, 11, snippet[:500])  # column K = reply_snippet
-                updated = True
-        if updated:
+                last_row = i
+        if last_row:
+            sheet.update_cell(last_row, 7, "TRUE")      # column G = replied
+            sheet.update_cell(last_row, 10, "TRUE")     # column J = opt_out
+            if snippet:
+                sheet.update_cell(last_row, 11, snippet[:500])  # column K = reply_snippet
             logger.info(f"Marked {email} as Unsubscribed (opt_out=TRUE) in Sheets")
             return True
         logger.warning(f"Email {email} not found in sheet for unsubscribe")
