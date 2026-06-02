@@ -3,7 +3,7 @@ import { useSpamScores } from '../hooks/usePolling'
 import api from '../api/client'
 import {
   ShieldCheck, ShieldAlert, ShieldX, AlertTriangle,
-  ChevronDown, ChevronUp, Send
+  ChevronDown, ChevronUp, Send, Users, TrendingUp, TrendingDown
 } from 'lucide-react'
 
 const scoreColors = {
@@ -27,20 +27,23 @@ const scoreIcons = {
   high_risk: ShieldX,
 }
 
-function ScoreRing({ score }) {
+function ScoreRing({ score, size = 80 }) {
   const color =
     score <= 20 ? '#10b981'
     : score <= 40 ? '#eab308'
     : score <= 60 ? '#f97316'
     : '#ef4444'
+  const r = (size / 2) - 5
+  const circ = 2 * Math.PI * r
+  const offset = circ - (score / 100) * circ
 
   return (
-    <div className="relative w-20 h-20">
-      <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
-        <circle cx="40" cy="40" r="35" fill="none" stroke="#1e293b" strokeWidth="6" />
+    <div className="relative" style={{ width: size, height: size }}>
+      <svg className={`w-full h-full -rotate-90`} viewBox={`0 0 ${size} ${size}`}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#1e293b" strokeWidth="5" />
         <circle
-          cx="40" cy="40" r="35" fill="none" stroke={color} strokeWidth="6"
-          strokeDasharray={`${(score / 100) * 220} 220`}
+          cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth="5"
+          strokeDasharray={`${circ - offset} ${circ}`}
           strokeLinecap="round"
         />
       </svg>
@@ -51,10 +54,92 @@ function ScoreRing({ score }) {
   )
 }
 
-function TemplateCard({ template }) {
+function FindingsList({ findings }) {
+  if (!findings || findings.length === 0) return <p className="text-slate-500 text-sm">No issues found.</p>
+  return (
+    <div className="space-y-2">
+      {findings.map((f, i) => (
+        <div key={i} className="flex items-start gap-3 text-sm">
+          <span className={`mt-0.5 px-1.5 py-0.5 rounded text-xs font-medium shrink-0 ${
+            f.severity === 'critical' ? 'bg-red-500/20 text-red-400' :
+            f.severity === 'high' ? 'bg-orange-500/20 text-orange-400' :
+            f.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
+            f.severity === 'low' ? 'bg-slate-500/20 text-slate-400' :
+            'bg-blue-500/20 text-blue-400'
+          }`}>
+            {f.points > 0 ? `+${f.points}` : '—'}
+          </span>
+          <span className={f.points > 0 ? 'text-slate-300' : 'text-slate-500'}>{f.rule}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function RecipientRow({ r, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen)
+  const Icon = scoreIcons[r.label]
+
+  return (
+    <div className="bg-slate-800/50 rounded-lg border border-slate-700/50 overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full px-4 py-3 flex items-center gap-3 text-left hover:bg-slate-800 transition-colors"
+      >
+        <ScoreRing score={r.score} size={40} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-white text-sm font-medium truncate">{r.name}</span>
+            <span className="text-slate-500 text-xs truncate">{r.email}</span>
+          </div>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-slate-500 text-xs">{r.company}</span>
+          </div>
+        </div>
+        <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${scoreColors[r.label]}`}>
+          {scoreLabels[r.label]}
+        </span>
+        <span className="text-slate-400">
+          {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-700/50 p-4 space-y-3">
+          <div>
+            <label className="text-xs text-slate-500 uppercase tracking-wider">Subject</label>
+            <p className="text-white text-sm mt-1">{r.subject}</p>
+          </div>
+          {r.body && (
+            <div>
+              <label className="text-xs text-slate-500 uppercase tracking-wider">Body</label>
+              <pre className="text-slate-300 mt-1 whitespace-pre-wrap text-sm font-sans leading-relaxed">{r.body}</pre>
+            </div>
+          )}
+          {!r.body && (
+            <p className="text-slate-500 text-xs italic">Body not stored (pipeline needs to run to capture it)</p>
+          )}
+          <div>
+            <label className="text-xs text-slate-500 uppercase tracking-wider">Findings</label>
+            <div className="mt-2">
+              <FindingsList findings={r.findings} />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function StepCard({ template }) {
   const [open, setOpen] = useState(false)
-  const Icon = scoreIcons[template.label]
-  const findings = template.findings || []
+  const recipients = template.recipients || []
+  const sorted = [...recipients].sort((a, b) => b.score - a.score)
+  const Icon = scoreIcons[
+    template.avg_score <= 20 ? 'safe' :
+    template.avg_score <= 40 ? 'low_risk' :
+    template.avg_score <= 60 ? 'medium_risk' : 'high_risk'
+  ]
 
   return (
     <div className="bg-card rounded-xl border border-slate-700 overflow-hidden">
@@ -62,53 +147,67 @@ function TemplateCard({ template }) {
         onClick={() => setOpen(!open)}
         className="w-full p-5 flex items-center gap-4 text-left hover:bg-slate-800/50 transition-colors"
       >
-        <ScoreRing score={template.score} />
+        <ScoreRing score={template.avg_score} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <Icon size={16} className={scoreColors[template.label].split(' ')[0]} />
-            <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${scoreColors[template.label]}`}>
-              {scoreLabels[template.label]}
+            <Icon size={16} className={scoreColors[
+              template.avg_score <= 20 ? 'safe' :
+              template.avg_score <= 40 ? 'low_risk' :
+              template.avg_score <= 60 ? 'medium_risk' : 'high_risk'
+            ].split(' ')[0]} />
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${scoreColors[
+              template.avg_score <= 20 ? 'safe' :
+              template.avg_score <= 40 ? 'low_risk' :
+              template.avg_score <= 60 ? 'medium_risk' : 'high_risk'
+            ]}`}>
+              Avg Score
             </span>
           </div>
           <h3 className="text-white font-semibold">Email #{template.step}</h3>
-          <p className="text-slate-400 text-sm truncate">{template.subject}</p>
+          <p className="text-slate-400 text-sm">
+            {template.recipient_count} recipient{template.recipient_count !== 1 ? 's' : ''} sent
+          </p>
         </div>
-        <div className="text-slate-400">
+        <div className="text-right mr-2">
+          <div className="flex items-center gap-1 text-emerald-400 text-xs">
+            <TrendingDown size={14} />
+            <span>{template.best?.score} best</span>
+          </div>
+          <div className="flex items-center gap-1 text-red-400 text-xs mt-1">
+            <TrendingUp size={14} />
+            <span>{template.worst?.score} worst</span>
+          </div>
+        </div>
+        <span className="text-slate-400">
           {open ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
-        </div>
+        </span>
       </button>
 
       {open && (
         <div className="border-t border-slate-700 p-5 space-y-4">
-          <div>
-            <label className="text-xs text-slate-500 uppercase tracking-wider">Subject</label>
-            <p className="text-white mt-1">{template.subject}</p>
-          </div>
-          <div>
-            <label className="text-xs text-slate-500 uppercase tracking-wider">Body</label>
-            <pre className="text-slate-300 mt-1 whitespace-pre-wrap text-sm font-sans leading-relaxed">{template.body}</pre>
-          </div>
-          {findings.length > 0 && (
-            <div>
-              <label className="text-xs text-slate-500 uppercase tracking-wider">Findings</label>
-              <div className="mt-2 space-y-2">
-                {findings.map((f, i) => (
-                  <div key={i} className="flex items-start gap-3 text-sm">
-                    <span className={`mt-0.5 px-1.5 py-0.5 rounded text-xs font-medium ${
-                      f.severity === 'critical' ? 'bg-red-500/20 text-red-400' :
-                      f.severity === 'high' ? 'bg-orange-500/20 text-orange-400' :
-                      f.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
-                      f.severity === 'low' ? 'bg-slate-500/20 text-slate-400' :
-                      'bg-blue-500/20 text-blue-400'
-                    }`}>
-                      {f.points > 0 ? `+${f.points}` : '—'}
-                    </span>
-                    <span className={f.points > 0 ? 'text-slate-300' : 'text-slate-500'}>{f.rule}</span>
-                  </div>
-                ))}
-              </div>
+          <div className="flex items-center gap-4 text-sm">
+            <div className="flex items-center gap-1.5 text-slate-400">
+              <Users size={14} />
+              <span>{template.recipient_count} recipient{template.recipient_count !== 1 ? 's' : ''}</span>
             </div>
-          )}
+            <div className="text-slate-500">|</div>
+            <div className="text-slate-400">
+              Avg: <span className="text-white font-medium">{template.avg_score}</span>/100
+            </div>
+            <div className="text-slate-500">|</div>
+            <div className="text-emerald-400">
+              Best: <span className="font-medium">{template.best?.name}</span> ({template.best?.score})
+            </div>
+            <div className="text-red-400">
+              Worst: <span className="font-medium">{template.worst?.name}</span> ({template.worst?.score})
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            {sorted.map(r => (
+              <RecipientRow key={r.lead_id} r={r} defaultOpen={r.score >= 30} />
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -182,24 +281,7 @@ function CustomChecker() {
               </p>
             </div>
           </div>
-          {result.findings.length > 0 && (
-            <div className="space-y-2">
-              {result.findings.map((f, i) => (
-                <div key={i} className="flex items-start gap-3 text-sm">
-                  <span className={`mt-0.5 px-1.5 py-0.5 rounded text-xs font-medium ${
-                    f.severity === 'critical' ? 'bg-red-500/20 text-red-400' :
-                    f.severity === 'high' ? 'bg-orange-500/20 text-orange-400' :
-                    f.severity === 'medium' ? 'bg-yellow-500/20 text-yellow-400' :
-                    f.severity === 'low' ? 'bg-slate-500/20 text-slate-400' :
-                    'bg-blue-500/20 text-blue-400'
-                  }`}>
-                    {f.points > 0 ? `+${f.points}` : '—'}
-                  </span>
-                  <span className={f.points > 0 ? 'text-slate-300' : 'text-slate-500'}>{f.rule}</span>
-                </div>
-              ))}
-            </div>
-          )}
+          <FindingsList findings={result.findings} />
         </div>
       )}
     </div>
@@ -210,38 +292,57 @@ export default function SpamScore() {
   const { data, loading, error } = useSpamScores()
   const templates = data?.templates || []
 
-  const avgScore = templates.length
-    ? Math.round(templates.reduce((s, t) => s + t.score, 0) / templates.length)
+  const totalRecipients = templates.reduce((s, t) => s + t.recipient_count, 0)
+  const overallAvg = totalRecipients > 0
+    ? Math.round(templates.reduce((s, t) => s + t.avg_score * t.recipient_count, 0) / totalRecipients)
     : 0
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-white">Spam Score Checker</h1>
-        <p className="text-slate-400 text-sm mt-1">Analyze email templates against spam rules</p>
+        <p className="text-slate-400 text-sm mt-1">Analyze actual emails sent through the pipeline</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {[
-          { label: 'Email #1 (Day 0)', color: 'blue' },
-          { label: 'Email #2 (Day 5)', color: 'yellow' },
-          { label: 'Email #3 (Day 10)', color: 'purple' },
-        ].map((item, i) => {
-          const t = templates[i]
-          if (!t) return null
-          const Icon = scoreIcons[t.label]
+      {loading && <div className="text-slate-400 text-sm">Loading spam scores...</div>}
+      {error && <div className="text-red-400 text-sm">Failed to load spam scores.</div>}
+
+      {!loading && !error && templates.length === 0 && (
+        <div className="bg-card rounded-xl border border-slate-700 p-8 text-center">
+          <ShieldCheck size={48} className="mx-auto text-slate-600 mb-4" />
+          <h3 className="text-white font-semibold mb-2">No sent emails yet</h3>
+          <p className="text-slate-400 text-sm">Run the pipeline to send emails, then come back to check spam scores.</p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="bg-card rounded-xl border border-slate-700 p-5">
+          <span className="text-slate-400 text-sm">Overall Avg Score</span>
+          <div className="flex items-end gap-2 mt-2">
+            <span className="text-3xl font-bold text-white">{overallAvg}</span>
+            <span className="text-slate-500 text-sm mb-1">/ 100</span>
+          </div>
+        </div>
+        <div className="bg-card rounded-xl border border-slate-700 p-5">
+          <span className="text-slate-400 text-sm">Total Recipients</span>
+          <div className="flex items-end gap-2 mt-2">
+            <span className="text-3xl font-bold text-white">{totalRecipients}</span>
+          </div>
+        </div>
+        {templates.map(t => {
+          const label =
+            t.avg_score <= 20 ? 'safe' :
+            t.avg_score <= 40 ? 'low_risk' :
+            t.avg_score <= 60 ? 'medium_risk' : 'high_risk'
           return (
-            <div key={i} className="bg-card rounded-xl border border-slate-700 p-5">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-slate-400 text-sm">{item.label}</span>
-                <Icon size={18} className={scoreColors[t.label].split(' ')[0]} />
+            <div key={t.step} className="bg-card rounded-xl border border-slate-700 p-5">
+              <span className="text-slate-400 text-sm">Email #{t.step}</span>
+              <div className="flex items-end gap-2 mt-2">
+                <span className="text-3xl font-bold text-white">{t.avg_score}</span>
+                <span className="text-slate-500 text-sm mb-1">avg</span>
               </div>
-              <div className="flex items-end gap-2">
-                <span className="text-3xl font-bold text-white">{t.score}</span>
-                <span className="text-slate-500 text-sm mb-1">/ 100</span>
-              </div>
-              <span className={`inline-block mt-2 text-xs font-medium px-2 py-0.5 rounded-full border ${scoreColors[t.label]}`}>
-                {scoreLabels[t.label]}
+              <span className={`inline-block mt-2 text-xs font-medium px-2 py-0.5 rounded-full border ${scoreColors[label]}`}>
+                {scoreLabels[label]} · {t.recipient_count}
               </span>
             </div>
           )
@@ -250,16 +351,14 @@ export default function SpamScore() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold text-white">Email Templates</h2>
-          {loading && <div className="text-slate-400 text-sm">Loading...</div>}
-          {error && <div className="text-red-400 text-sm">Failed to load spam scores.</div>}
+          <h2 className="text-lg font-semibold text-white">By Email Sequence</h2>
           {templates.map(t => (
-            <TemplateCard key={t.step} template={t} />
+            <StepCard key={t.step} template={t} />
           ))}
         </div>
 
         <div>
-          <h2 className="text-lg font-semibold text-white mb-4">Check Your Own</h2>
+          <h2 className="text-lg font-semibold text-white mb-4">Custom Check</h2>
           <CustomChecker />
         </div>
       </div>
