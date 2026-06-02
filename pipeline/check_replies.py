@@ -305,7 +305,7 @@ def check_for_replies():
                 if is_unsub:
                     log.info(f"  UNSUBSCRIBE detected for {school_name}")
                     try:
-                        sheets.mark_unsubscribed(sender)
+                        sheets.mark_unsubscribed(sender, snippet)
                         total_updated += 1
                         total_unsub   += 1
                         log.info("  Sheets updated: unsubscribed=Y")

@@ -259,16 +259,20 @@ def mark_replied(
     return False
 
 
-def mark_unsubscribed(email: str) -> bool:
+def mark_unsubscribed(email: str, snippet: str = "") -> bool:
     """
-    Finds the lead row by email and sets opt_out = TRUE in column J (10).
+    Finds the lead row by email and sets opt_out=TRUE, replied=TRUE,
+    and stores the reply snippet.
     Returns True on success, False on failure.
     """
     try:
         records = sheet.get_all_records()
         for i, row in enumerate(records, start=2):  # row 1 = header
             if row.get("email", "").strip().lower() == email.strip().lower():
-                sheet.update_cell(i, 10, "TRUE")  # column J = opt_out
+                sheet.update_cell(i, 7, "TRUE")      # column G = replied
+                sheet.update_cell(i, 10, "TRUE")     # column J = opt_out
+                if snippet:
+                    sheet.update_cell(i, 11, snippet[:500])  # column K = reply_snippet
                 print(f"  Marked {email} as Unsubscribed (opt_out=TRUE) in Sheets")
                 return True
         print(f"  Email {email} not found in sheet for unsubscribe")
