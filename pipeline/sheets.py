@@ -60,6 +60,10 @@ def normalize_date(raw: str) -> str:
 
 def clean_lead_data(lead):
 
+    raw_email_sent = str(
+        lead.get("email_sent_at", "")
+    ).strip()
+
     return {
 
         "lead_id": str(
@@ -78,9 +82,9 @@ def clean_lead_data(lead):
             lead.get("company", "")
         ).strip(),
 
-        "email_sent_at": normalize_date(
-            lead.get("email_sent_at", "")
-        ),
+        "email_sent_at": normalize_date(raw_email_sent),
+
+        "email_sent_at_raw": raw_email_sent,
 
         "sequence_step": int(
             lead.get("sequence_step", 0) or 0
