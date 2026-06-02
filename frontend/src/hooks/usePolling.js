@@ -79,3 +79,11 @@ export function useSubjectLines() {
   }, [])
   return usePolling(fetchFn)
 }
+
+export function useSpamScores() {
+  const fetchFn = useCallback(async () => {
+    const res = await api.get('/spam-score')
+    return res.data
+  }, [])
+  return usePolling(fetchFn)
+}

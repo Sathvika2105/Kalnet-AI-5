@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 from api.models import init_db, User, SessionLocal
 from api.auth import hash_password
-from api.routes import auth_routes, metrics, leads, replies, analytics, settings, pipeline
+from api.routes import auth_routes, metrics, leads, replies, analytics, settings, pipeline, spam
 
 app = FastAPI(title="Kalnet AI-5 Dashboard", version="1.0.0")
 
@@ -27,6 +27,7 @@ app.include_router(replies.router)
 app.include_router(analytics.router)
 app.include_router(settings.router)
 app.include_router(pipeline.router)
+app.include_router(spam.router)
 
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend" / "dist"
 
