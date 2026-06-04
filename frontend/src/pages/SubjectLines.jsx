@@ -23,7 +23,7 @@ export default function SubjectLines() {
       const res = await api.get('/leads')
       const sent = (res.data.leads || [])
         .filter(l => l.email_sent_at)
-        .sort((a, b) => (b.email_sent_at || '').localeCompare(a.email_sent_at || ''))
+        .sort((a, b) => (b.email_sent_at_raw || b.email_sent_at || '').localeCompare(a.email_sent_at_raw || a.email_sent_at || ''))
       setSentEmails(sent)
       setShowEmails(true)
     } finally {
@@ -104,7 +104,7 @@ export default function SubjectLines() {
                           </span>
                         </td>
                         <td className="px-4 py-4 text-sm text-slate-400">
-                          {lead.email_sent_at || 'N/A'}
+                          {lead.email_sent_at_raw || lead.email_sent_at || 'N/A'}
                         </td>
                         <td className="px-4 py-4">
                           {lead.replied ? (

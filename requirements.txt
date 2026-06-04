@@ -1,9 +1,9 @@
 gspread
-oauth2client
-pandas
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
 python-dotenv
 requests
-streamlit
 fastapi
 uvicorn[standard]
 python-jose[cryptography]

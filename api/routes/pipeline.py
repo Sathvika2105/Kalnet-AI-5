@@ -1,9 +1,7 @@
 from fastapi import APIRouter, Depends
 from api.auth import get_current_user
 from api.models import User
-import sys, os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+import os
 
 router = APIRouter(prefix="/api", tags=["pipeline"])
 

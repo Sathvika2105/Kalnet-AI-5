@@ -79,9 +79,8 @@ export default function Leads() {
           onChange={(e) => setFilters({ ...filters, opt_out: e.target.value })}
           className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm"
         >
-          <option value="">All Opt-out</option>
-          <option value="true">Opted Out</option>
           <option value="false">Active</option>
+          <option value="true">Opted Out</option>
         </select>
 
         <select
@@ -90,7 +89,6 @@ export default function Leads() {
           className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm"
         >
           <option value="">All Steps</option>
-          <option value="0">Step 0</option>
           <option value="1">Step 1</option>
           <option value="2">Step 2</option>
           <option value="3">Step 3</option>

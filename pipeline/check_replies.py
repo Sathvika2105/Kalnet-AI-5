@@ -6,7 +6,7 @@ import sys
 import time
 import logging
 import requests
-from datetime import date
+from datetime import date, timedelta
 from email.header import decode_header
 from dotenv import load_dotenv
 
@@ -15,8 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import sheets
 except ImportError:
-    print("ERROR: Cannot import sheets.py")
-    print("Make sure sheets.py is in the same pipeline/ folder")
+    log.error("Cannot import sheets.py — make sure sheets.py is in the same pipeline/ folder")
     sys.exit(1)
 
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env')
@@ -44,15 +43,6 @@ UNSUBSCRIBE_TRIGGERS = [
 log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs')
 os.makedirs(log_dir, exist_ok=True)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[
-        logging.FileHandler(os.path.join(log_dir, 'replies.log')),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
 log = logging.getLogger("check_replies")
 
 
@@ -64,8 +54,8 @@ def validate_env():
     if not ULTRAMSG_INSTANCE_ID: missing.append("ULTRAMSG_INSTANCE_ID")
     if not ULTRAMSG_TOKEN:       missing.append("ULTRAMSG_TOKEN")
     if missing:
-        print(f"ERROR: Missing in .env file: {', '.join(missing)}")
-        print("Fill these in your .env file and try again.")
+        log.error(f"Missing in .env file: {', '.join(missing)}")
+        log.error("Fill these in your .env file and try again.")
         sys.exit(1)
 
 
@@ -179,11 +169,11 @@ def build_lead_lookup() -> dict:
 
     lookup = {}
     for lead in all_leads:
-        addr         = lead.get("email", "").strip().lower()
-        email_sent   = lead.get("email_sent_at", "").strip()
-        replied      = lead.get("replied", False)
+        addr = lead.get("email", "").strip().lower()
+        email_sent = lead.get("email_sent_at", "").strip()
+        opted_out = lead.get("opt_out", False)
 
-        if addr and email_sent and not replied:
+        if addr and email_sent and not opted_out:
             lookup[addr] = lead
 
     log.info(f"Watching {len(lookup)} emailed leads for replies")
@@ -228,7 +218,7 @@ def check_for_replies():
         log.error("Aborting — could not connect to Gmail.")
         return
 
-    total_unread  = 0
+    total_found  = 0
     total_matched = 0
     total_updated = 0
     total_wa_sent = 0
@@ -237,18 +227,23 @@ def check_for_replies():
     try:
         mail.select("INBOX")
 
-        status, data = mail.search(None, "UNSEEN")
+        yesterday = date.today() - timedelta(days=1)
+        imap_date = yesterday.strftime("%d-%b-%Y")
+        status, data = mail.search(None, f"SINCE {imap_date}")
         if status != "OK":
             log.warning(f"IMAP search status: {status}")
             return
 
-        msg_ids      = data[0].split()
-        total_unread = len(msg_ids)
-        log.info(f"Found {total_unread} unread email(s)")
+        raw_ids = data[0] if data and data[0] else b""
+        msg_ids = raw_ids.split()
+        total_found = len(msg_ids)
+        log.info(f"Found {total_found} email(s) since {imap_date}")
 
         if not msg_ids:
             log.info("No new emails. Run complete.")
             return
+
+        processed_senders = set()
 
         for msg_id in msg_ids:
             try:
@@ -267,8 +262,12 @@ def check_for_replies():
 
                 log.info(f"Processing: {sender} | {subject}")
 
-                if sender not in lead_lookup:
+                if sender not in lead_lookup or sender in processed_senders:
                     log.info("  Not a tracked lead — skipping")
+                    try:
+                        mail.store(msg_id, "+FLAGS", "\\Deleted")
+                    except Exception:
+                        pass
                     continue
 
                 total_matched += 1
@@ -281,10 +280,22 @@ def check_for_replies():
                 snippet = extract_body(msg)
                 log.info(f"  Snippet: {snippet[:80]}...")
 
-                if is_unsubscribe_request(subject, snippet):
+                is_unsub = is_unsubscribe_request(subject, snippet)
+                already_replied = lead.get("replied", False)
+
+                if already_replied and not is_unsub:
+                    log.info("  Already replied — skipping (not an unsubscribe)")
+                    try:
+                        mail.store(msg_id, "+FLAGS", "\\Deleted")
+                        log.info("  Archived from INBOX")
+                    except Exception:
+                        pass
+                    continue
+
+                if is_unsub:
                     log.info(f"  UNSUBSCRIBE detected for {school_name}")
                     try:
-                        sheets.mark_unsubscribed(sender)
+                        sheets.mark_unsubscribed(sender, snippet)
                         total_updated += 1
                         total_unsub   += 1
                         log.info("  Sheets updated: unsubscribed=Y")
@@ -311,15 +322,27 @@ def check_for_replies():
                     if wa_ok:
                         total_wa_sent += 1
 
-                del lead_lookup[sender]
+                try:
+                    mail.store(msg_id, "+FLAGS", "\\Deleted")
+                    log.info("  Archived from INBOX")
+                except Exception as e:
+                    log.warning(f"  Could not archive email: {e}")
+
+                processed_senders.add(sender)
                 time.sleep(2)
 
             except Exception as e:
                 log.error(f"Error processing message {msg_id}: {e}")
                 continue
 
+        try:
+            mail.expunge()
+        except Exception:
+            pass
+
     finally:
         try:
+            mail.close()
             mail.logout()
             log.info("IMAP connection closed")
         except Exception:
@@ -328,7 +351,7 @@ def check_for_replies():
     log.info("")
     log.info("-" * 40)
     log.info("RUN SUMMARY")
-    log.info(f"  Unread checked  : {total_unread}")
+    log.info(f"  Emails scanned  : {total_found}")
     log.info(f"  Matched to leads: {total_matched}")
     log.info(f"  Sheets updated  : {total_updated}")
     log.info(f"  WhatsApp sent   : {total_wa_sent}")
@@ -336,7 +359,7 @@ def check_for_replies():
     log.info("-" * 40)
 
     write_summary_line(
-        total_unread, total_matched,
+        total_found, total_matched,
         total_updated, total_wa_sent, total_unsub
     )
 

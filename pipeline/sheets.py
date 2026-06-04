@@ -1,45 +1,26 @@
 from datetime import datetime
 import re
+import logging
 
-USE_MOCK_FOR_DEMO = False
+logger = logging.getLogger(__name__)
 
+import gspread
+from google.oauth2.service_account import Credentials
 
-# DEMO / MOCK MODE
-if USE_MOCK_FOR_DEMO:
+scopes = [
+    "https://spreadsheets.google.com/feeds",
+    "https://www.googleapis.com/auth/drive"
+]
 
-    from config.mock_google_sheets import MockClient as RealClient
-    from config.mock_google_sheets import mock_authorize as authorize
+creds = Credentials.from_service_account_file(
+    "config/service_account.json", scopes=scopes
+)
 
-    print("Running in DEMO MODE with mock data")
+client = gspread.authorize(creds)
 
-    client = authorize(None)
-
-    sheet = client.open_by_key(
-        "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
-    ).sheet1
-
-
-# REAL GOOGLE SHEETS MODE
-else:
-
-    import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
-
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive"
-    ]
-
-    creds = ServiceAccountCredentials.from_json_keyfile_name(
-        "config/service_account.json",
-        scope
-    )
-
-    client = gspread.authorize(creds)
-
-    sheet = client.open_by_key(
-        "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
-    ).sheet1
+sheet = client.open_by_key(
+    "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
+).sheet1
 
 
 # CLEAN LEAD DATA
@@ -60,6 +41,10 @@ def normalize_date(raw: str) -> str:
 
 def clean_lead_data(lead):
 
+    raw_email_sent = str(
+        lead.get("email_sent_at", "")
+    ).strip()
+
     return {
 
         "lead_id": str(
@@ -78,9 +63,9 @@ def clean_lead_data(lead):
             lead.get("company", "")
         ).strip(),
 
-        "email_sent_at": normalize_date(
-            lead.get("email_sent_at", "")
-        ),
+        "email_sent_at": normalize_date(raw_email_sent),
+
+        "email_sent_at_raw": raw_email_sent,
 
         "sequence_step": int(
             lead.get("sequence_step", 0) or 0
@@ -196,17 +181,17 @@ def mark_email_sent(
                 # Column 9 = subject_line
                 sheet.update_cell(index, 9, subject_line)
 
-                print(f"Updated lead {lead_id}")
+                logger.info(f"Updated lead {lead_id}")
 
                 return True
 
             except Exception as error:
 
-                print(f"Failed to update lead: {error}")
+                logger.error(f"Failed to update lead: {error}")
 
                 return False
 
-    print("Lead not found")
+    logger.warning("Lead not found")
 
     return False
 
@@ -240,35 +225,42 @@ def mark_replied(
                 if snippet:
                     sheet.update_cell(index, 11, snippet[:500])
 
-                print(f"Lead {lead_id} marked as replied")
+                logger.info(f"Lead {lead_id} marked as replied")
 
                 return True
 
             except Exception as error:
 
-                print(f"Failed to update reply status: {error}")
+                logger.error(f"Failed to update reply status: {error}")
 
                 return False
 
-    print("Lead not found")
+    logger.warning("Lead not found")
 
     return False
 
 
-def mark_unsubscribed(email: str) -> bool:
+def mark_unsubscribed(email: str, snippet: str = "") -> bool:
     """
-    Finds the lead row by email and sets opt_out = TRUE in column J (10).
-    Returns True on success, False on failure.
+    Finds the LAST (newest) lead row by email and sets opt_out=TRUE,
+    replied=TRUE, and stores the reply snippet.
+    Returns True if a row was updated, False otherwise.
     """
     try:
         records = sheet.get_all_records()
-        for i, row in enumerate(records, start=2):  # row 1 = header
+        last_row = None
+        for i, row in enumerate(records, start=2):
             if row.get("email", "").strip().lower() == email.strip().lower():
-                sheet.update_cell(i, 10, "TRUE")  # column J = opt_out
-                print(f"  Marked {email} as Unsubscribed (opt_out=TRUE) in Sheets")
-                return True
-        print(f"  Email {email} not found in sheet for unsubscribe")
+                last_row = i
+        if last_row:
+            sheet.update_cell(last_row, 7, "TRUE")      # column G = replied
+            sheet.update_cell(last_row, 10, "TRUE")     # column J = opt_out
+            if snippet:
+                sheet.update_cell(last_row, 11, snippet[:500])  # column K = reply_snippet
+            logger.info(f"Marked {email} as Unsubscribed (opt_out=TRUE) in Sheets")
+            return True
+        logger.warning(f"Email {email} not found in sheet for unsubscribe")
         return False
     except Exception as e:
-        print(f"  mark_unsubscribed failed: {e}")
+        logger.error(f"mark_unsubscribed failed: {e}")
         return False

@@ -43,7 +43,7 @@ if sys.stdout.encoding is None or sys.stdout.encoding.lower() not in ('utf-8', '
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Import pipeline modules
-from pipeline import send_email, sequence, sheets, check_replies, unsubscribe
+from pipeline import send_email, sequence, sheets, check_replies
 from analytics import report
 
 # ──────────────────────────────────────────────
@@ -55,25 +55,6 @@ load_dotenv()
 # Logging setup
 # ──────────────────────────────────────────────
 os.makedirs('logs', exist_ok=True)
-
-
-# Custom formatter that replaces emoji characters for console output
-class ASCIIFormatter(logging.Formatter):
-    """Formatter that replaces emoji characters with ASCII-safe alternatives"""
-    EMOJI_MAP = {
-        '✅': '[OK]',
-        '❌': '[FAIL]',
-        '⚠️': '[WARN]',
-        '⚠': '[WARN]',
-    }
-    
-    def format(self, record):
-        # Get the formatted message from parent
-        result = super().format(record)
-        # Replace emoji characters
-        for emoji, replacement in self.EMOJI_MAP.items():
-            result = result.replace(emoji, replacement)
-        return result
 
 
 # Custom StreamHandler that handles emoji encoding issues
@@ -112,8 +93,8 @@ root_logger.addHandler(file_handler)
 
 # Stream handler (replace emoji with ASCII)
 stream_handler = UTF8SafeStreamHandler(sys.stdout)
-ascii_formatter = ASCIIFormatter('%(asctime)s [%(levelname)s] %(message)s')
-stream_handler.setFormatter(ascii_formatter)
+stream_formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+stream_handler.setFormatter(stream_formatter)
 root_logger.addHandler(stream_handler)
 
 log = logging.getLogger(__name__)
@@ -264,7 +245,7 @@ def step_4_send_emails(due_leads):
     return sent_count, failed_count
 
 
-def step_5_generate_analytics():
+def step_5_generate_analytics(leads=None):
     """
     Step 5: Generate analytics report
     - Calculates metrics from Google Sheets data
@@ -275,8 +256,9 @@ def step_5_generate_analytics():
     log.info("=" * 70)
     
     try:
-        # Get all leads to generate analytics
-        leads = sheets.get_all_leads()
+        # Use provided leads or fetch if not available
+        if leads is None:
+            leads = sheets.get_all_leads()
         
         # Convert to format expected by analytics module
         analytics_data = []
@@ -367,7 +349,7 @@ def run_pipeline():
             log.info("=" * 70 + "\n")
         
         # Step 5: Generate analytics
-        step_5_generate_analytics()
+        step_5_generate_analytics(leads)
         
         # Step 6: Print summary
         step_6_summary(sent_count, failed_count)
