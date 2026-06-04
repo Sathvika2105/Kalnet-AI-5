@@ -4,7 +4,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from pipeline import sheets  # now works
 
-
 from collections import Counter
 # from pipeline import sheets
 
