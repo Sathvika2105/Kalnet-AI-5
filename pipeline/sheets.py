@@ -13,7 +13,7 @@ scopes = [
 ]
 
 creds = Credentials.from_service_account_file(
-    "config/service_account.json", scopes=scopes
+    "service_account.json", scopes=scopes
 )
 
 client = gspread.authorize(creds)
