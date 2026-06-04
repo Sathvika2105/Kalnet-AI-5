@@ -42,6 +42,12 @@ def startup():
             db.commit()
     finally:
         db.close()
+        
+# Handle HEAD requests for health checks (UptimeRobot, etc)
+@app.head("/")
+@app.head("/api/health")
+async def health_check():
+    return {"status": "ok"}
 
 
 if FRONTEND_DIR.exists():
