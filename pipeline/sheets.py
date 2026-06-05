@@ -13,12 +13,10 @@ SCOPES = [
 ]
 
 import os
+import json
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-creds = Credentials.from_service_account_file(
-    os.path.join(BASE_DIR, "config", "service_account.json"), scopes=SCOPES
-)
-
+service_account_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
 client = gspread.authorize(creds)
 
 sheet = client.open_by_key(
