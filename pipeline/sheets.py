@@ -12,8 +12,11 @@ scopes = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+import os
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 creds = Credentials.from_service_account_file(
-    "service_account.json", scopes=scopes
+    os.path.join(BASE_DIR, "config", "service_account.json"), scopes=SCOPES
 )
 
 client = gspread.authorize(creds)
