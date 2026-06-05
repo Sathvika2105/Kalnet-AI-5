@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 import gspread
 from google.oauth2.service_account import Credentials
 
-scopes = [
+SCOPES = [
     "https://spreadsheets.google.com/feeds",
     "https://www.googleapis.com/auth/drive"
 ]
