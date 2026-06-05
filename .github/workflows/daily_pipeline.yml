@@ -26,6 +26,15 @@ jobs:
           mkdir -p config
           echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}' > config/service_account.json
 
+      - name: Debug paths        # ← ADD THIS BLOCK
+        run: |
+          echo "=== Current directory ==="
+          pwd
+          echo "=== Config folder ==="
+          ls -la config/ || echo "config/ folder not found"
+          echo "=== sheets.py lines 10-20 ==="
+          sed -n '10,20p' pipeline/sheets.py
+
       - name: Run pipeline
         env:
           GMAIL_ADDRESS:         ${{ secrets.GMAIL_ADDRESS }}
@@ -44,3 +53,6 @@ jobs:
           cat logs/pipeline.log || echo "No pipeline log found"
           echo "=== email.log ==="
           cat logs/email.log || echo "No email log found"
+      
+
+          
