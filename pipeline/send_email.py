@@ -19,22 +19,27 @@ SENDER_EMAIL = os.getenv("EMAIL_USER")
 # ── Build Gmail API service ───────────────────────────────────────────────────
 def _get_gmail_service():
     """Build Gmail API service using OAuth2 credentials from env."""
-    import json
-    token_data = {
-        "token":         os.getenv("GMAIL_TOKEN"),
-        "refresh_token": os.getenv("GMAIL_REFRESH_TOKEN"),
-        "token_uri":     "https://oauth2.googleapis.com/token",
-        "client_id":     os.getenv("GMAIL_CLIENT_ID"),
-        "client_secret": os.getenv("GMAIL_CLIENT_SECRET"),
-        "scopes":        ["https://www.googleapis.com/auth/gmail.send"]
-    }
+    client_id     = os.getenv("GMAIL_CLIENT_ID")
+    client_secret = os.getenv("GMAIL_CLIENT_SECRET")
+    token         = os.getenv("GMAIL_TOKEN")
+    refresh_token = os.getenv("GMAIL_REFRESH_TOKEN")
+
+    # Debug log to confirm values are loaded
+    logger.info(f"GMAIL_CLIENT_ID set: {bool(client_id)}")
+    logger.info(f"GMAIL_CLIENT_SECRET set: {bool(client_secret)}")
+    logger.info(f"GMAIL_TOKEN set: {bool(token)}")
+    logger.info(f"GMAIL_REFRESH_TOKEN set: {bool(refresh_token)}")
+
+    if not all([client_id, client_secret, refresh_token]):
+        raise ValueError("Missing Gmail OAuth credentials in environment variables")
+
     creds = Credentials(
-        token=token_data["token"],
-        refresh_token=token_data["refresh_token"],
-        token_uri=token_data["token_uri"],
-        client_id=token_data["client_id"],
-        client_secret=token_data["client_secret"],
-        scopes=token_data["scopes"]
+        token=token,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=["https://www.googleapis.com/auth/gmail.send"]
     )
     return build("gmail", "v1", credentials=creds)
 
