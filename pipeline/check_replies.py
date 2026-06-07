@@ -225,10 +225,11 @@ def check_for_replies():
     total_unsub   = 0
 
     try:
-        mail.select("INBOX")
+        mail.select('"[Gmail]/All Mail"')
 
-        yesterday = date.today() - timedelta(days=1)
-        imap_date = yesterday.strftime("%d-%b-%Y")
+        seven_days_ago = date.today() - timedelta(days=7)
+        imap_date = seven_days_ago.strftime("%d-%b-%Y")
+        log.info(f"Searching emails since {imap_date}")
         status, data = mail.search(None, f"SINCE {imap_date}")
         if status != "OK":
             log.warning(f"IMAP search status: {status}")
@@ -374,4 +375,3 @@ if __name__ == "__main__":
 #     log.info("Sleeping 1 hour...")
 #     time.sleep(3600)
 
-   
