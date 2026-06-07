@@ -361,6 +361,8 @@ def run_pipeline():
         log.error("Pipeline execution stopped due to error\n")
         raise
 
+def main():
+    run_pipeline()
 
 # ──────────────────────────────────────────────
 # Entry Point

@@ -1,45 +1,23 @@
 name: Daily Email Pipeline
-
 on:
   schedule:
-    - cron: '30 3 * * *'  
+    - cron: '30 3 * * *'   # 9:00 AM IST
   workflow_dispatch:
 
 jobs:
-  run-pipeline:
+  trigger-pipeline:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run pipeline
-        env:
-          GMAIL_ADDRESS:         ${{ secrets.GMAIL_ADDRESS }}
-          GMAIL_APP_PASSWORD:    ${{ secrets.GMAIL_APP_PASSWORD }}  
-          EMAIL_USER:            ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS:            ${{ secrets.EMAIL_PASS }}
-          RISHAV_PHONE:          ${{ secrets.RISHAV_PHONE }}
-          ULTRAMSG_INSTANCE_ID:  ${{ secrets.ULTRAMSG_INSTANCE_ID }}
-          ULTRAMSG_TOKEN:        ${{ secrets.ULTRAMSG_TOKEN }}
-          GOOGLE_SERVICE_ACCOUNT_JSON:  ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-        run: python pipeline/run.py
-
-      - name: Show logs on failure
-        if: failure()
+      - name: Trigger pipeline on Render
         run: |
-          echo "=== pipeline.log ==="
-          cat logs/pipeline.log || echo "No pipeline log found"
-          echo "=== email.log ==="
-          cat logs/email.log || echo "No email log found"
-      
-
-          
+          response=$(curl -s -o response.txt -w "%{http_code}" \
+            -X POST "${{ secrets.RENDER_URL }}/api/trigger-pipeline" \
+            -H "x-pipeline-secret: ${{ secrets.PIPELINE_TRIGGER_SECRET }}" \
+            -H "Content-Type: application/json")
+          echo "Response code: $response"
+          echo "Response body: $(cat response.txt)"
+          if [ "$response" != "200" ]; then
+            echo "Pipeline trigger failed"
+            exit 1
+          fi
+          echo "Pipeline triggered successfully on Render"
