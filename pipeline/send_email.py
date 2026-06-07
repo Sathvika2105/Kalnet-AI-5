@@ -1,30 +1,59 @@
-import smtplib
-import time
+import base64
 import logging
 import os
 import uuid
-from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+
+from dotenv import load_dotenv
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 logger = logging.getLogger(__name__)
 
-SMTP_SERVER = 'smtp.gmail.com'
-SMTP_PORT = 587
 SENDER_EMAIL = os.getenv("EMAIL_USER")
-SENDER_PASSWORD = os.getenv("EMAIL_PASS")
 
-DELAY_SECONDS = 30
-MAX_RETRIES = 2
+# ── Build Gmail API service ───────────────────────────────────────────────────
+def _get_gmail_service():
+    """Build Gmail API service using OAuth2 credentials from env."""
+    import json
+    token_data = {
+        "token":         os.getenv("GMAIL_TOKEN"),
+        "refresh_token": os.getenv("GMAIL_REFRESH_TOKEN"),
+        "token_uri":     "https://oauth2.googleapis.com/token",
+        "client_id":     os.getenv("GMAIL_CLIENT_ID"),
+        "client_secret": os.getenv("GMAIL_CLIENT_SECRET"),
+        "scopes":        ["https://www.googleapis.com/auth/gmail.send"]
+    }
+    creds = Credentials(
+        token=token_data["token"],
+        refresh_token=token_data["refresh_token"],
+        token_uri=token_data["token_uri"],
+        client_id=token_data["client_id"],
+        client_secret=token_data["client_secret"],
+        scopes=token_data["scopes"]
+    )
+    return build("gmail", "v1", credentials=creds)
 
 
+def _build_message(to, subject, body):
+    """Create base64 encoded email message."""
+    msg = MIMEMultipart()
+    msg['From'] = SENDER_EMAIL
+    msg['To'] = to
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    return {"raw": raw}
+
+
+# ── Main send function ────────────────────────────────────────────────────────
 def send_email(to, subject, body):
-    if not SENDER_EMAIL or not SENDER_PASSWORD:
-        raise ValueError(
-            "EMAIL_USER and EMAIL_PASS must be set in .env"
-        )
+    if not SENDER_EMAIL:
+        raise ValueError("EMAIL_USER must be set in .env")
 
     if not to or not subject or not body:
         logger.error(f'Invalid email data: to={to}, subject={subject}')
@@ -33,38 +62,17 @@ def send_email(to, subject, body):
     email_id = str(uuid.uuid4())
     masked_to = to[:3] + "***" + to[-3:] if len(to) > 6 else "***"
 
-    attempt = 0
+    try:
+        service = _get_gmail_service()
+        message = _build_message(to, subject, body)
+        service.users().messages().send(userId="me", body=message).execute()
+        logger.info(f'[{email_id}] Email sent to {masked_to} | Subject: {subject}')
+        return {"success": True, "message": "sent"}
 
-    while attempt < MAX_RETRIES:
-        attempt += 1
-        try:
-            msg = MIMEMultipart()
-            msg['From'] = SENDER_EMAIL
-            msg['To'] = to
-            msg['Subject'] = subject
-            msg.attach(MIMEText(body, 'plain'))
+    except HttpError as e:
+        logger.error(f'[{email_id}] Gmail API error for {masked_to}: {e}')
+        return {"success": False, "message": str(e)}
 
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=10) as server:
-                server.starttls()
-                server.login(SENDER_EMAIL, SENDER_PASSWORD)
-                server.sendmail(SENDER_EMAIL, to, msg.as_string())
-
-            logger.info(f'[{email_id}] Email sent to {masked_to} | Subject: {subject}')
-            return {"success": True, "message": "sent"}
-
-        except Exception as e:
-            logger.warning(
-                f'[{email_id}] Attempt {attempt} failed for {masked_to}: '
-                f'{type(e).__name__} - {e}'
-            )
-
-            if attempt < MAX_RETRIES:
-                time.sleep(DELAY_SECONDS)
-            else:
-                logger.error(
-                    f'[{email_id}] Failed to send email to {masked_to} '
-                    f'after {MAX_RETRIES} attempts'
-                )
-                return {"success": False, "message": f"Failed after {MAX_RETRIES} attempts"}
-
-    return {"success": False, "message": "Unexpected error"}
+    except Exception as e:
+        logger.error(f'[{email_id}] Failed to send email to {masked_to}: {type(e).__name__} - {e}')
+        return {"success": False, "message": str(e)}

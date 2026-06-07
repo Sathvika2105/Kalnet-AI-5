@@ -9,3 +9,4 @@ uvicorn[standard]
 python-jose[cryptography]
 sqlalchemy
 python-multipart
+google-api-python-client
