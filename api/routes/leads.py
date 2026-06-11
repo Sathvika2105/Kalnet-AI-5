@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, Query
-from typing import Optional
+from fastapi import APIRouter, Depends, Query, HTTPException
+from typing import Optional, List
+from pydantic import BaseModel
+from datetime import datetime
 from api.auth import get_current_user
 from api.models import User
 import sys, os
@@ -9,6 +11,13 @@ from pipeline import sheets
 
 router = APIRouter(prefix="/api", tags=["leads"])
 
+# new data model for bulk upload
+class NewLead(BaseModel):
+    name: str
+    email: str
+    company: str
+    tier: int
+    subject_line: str
 
 @router.get("/leads")
 def get_leads(
@@ -49,3 +58,36 @@ def get_lead(lead_id: str, current_user: User = Depends(get_current_user)):
     if not lead:
         return {"error": "Lead not found"}, 404
     return lead
+
+
+# new endpoint for bulk upload
+@router.post("/leads/bulk")
+def bulk_upload_leads(leads: List[NewLead], current_user: User = Depends(get_current_user)):
+    try:
+        formatted_leads_for_sheets = []
+        
+        for lead in leads:
+            # Generate a new lead_id (e.g., L-20260611123456-0)
+            new_id = f"L-{datetime.now().strftime('%Y%m%d%H%M%S')}-{len(formatted_leads_for_sheets)}"
+            
+            row = [
+                new_id,                 # lead_id
+                lead.name,              # name
+                lead.email,             # email
+                lead.company,           # company
+                lead.tier,              # tier
+                lead.subject_line,      # subject_line
+                "",                     # email_sent_at
+                0,                      # sequence_step
+                False,                  # replied
+                False                   # opt_out
+            ]
+            formatted_leads_for_sheets.append(row)
+        
+        # Hand off the formatted list to the database module
+        sheets.bulk_add_leads(formatted_leads_for_sheets)
+        
+        return {"status": "success", "message": f"Successfully queued {len(leads)} leads."}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
