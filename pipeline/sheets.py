@@ -15,7 +15,12 @@ SCOPES = [
 import os
 import json
 
-service_account_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
+raw = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+if os.path.isfile(raw):
+    with open(raw) as f:
+        service_account_info = json.load(f)
+else:
+    service_account_info = json.loads(raw)
 creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
 client = gspread.authorize(creds)
 
@@ -38,6 +43,24 @@ def normalize_date(raw: str) -> str:
     if m:
         return f"{m.group(3)}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
     return raw
+
+
+def _safe_int(value, default=0):
+    try:
+        return int(value) if value else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _get_ci(d, key, default=""):
+    """Get value from dict by case-insensitive key lookup."""
+    if key in d:
+        return d[key]
+    lower = key.lower()
+    for k, v in d.items():
+        if k.lower() == lower:
+            return v
+    return default
 
 
 def clean_lead_data(lead):
@@ -68,8 +91,8 @@ def clean_lead_data(lead):
 
         "email_sent_at_raw": raw_email_sent,
 
-        "sequence_step": int(
-            lead.get("sequence_step", 0) or 0
+        "sequence_step": _safe_int(
+            lead.get("sequence_step", 0)
         ),
 
         "replied": str(
@@ -93,7 +116,11 @@ def clean_lead_data(lead):
 
         # NEW FIELD
         "reply_snippet": str(
-            lead.get("reply_snippet", "")
+            _get_ci(lead, "reply_content") or
+            _get_ci(lead, "reply_snippet") or
+            _get_ci(lead, "snippet") or
+            _get_ci(lead, "reply") or
+            ""
         ).strip()
     }
 
@@ -169,6 +196,7 @@ def bulk_add_leads(list_of_rows):
         }
 
         filtered_rows = []
+        duplicate_count = 0
 
         for row in list_of_rows:
 
@@ -176,11 +204,7 @@ def bulk_add_leads(list_of_rows):
             email = str(row[2]).strip().lower()
 
             if email in existing_emails:
-
-                logger.warning(
-                    f"Duplicate email skipped: {email}"
-                )
-
+                duplicate_count += 1
                 continue
 
             existing_emails.add(email)
@@ -189,22 +213,14 @@ def bulk_add_leads(list_of_rows):
 
         if not filtered_rows:
 
-            logger.info(
-                "No new leads added (all duplicates)"
-            )
-
-            return True
+            return {"added": 0, "skipped": duplicate_count}
 
         sheet.append_rows(
             filtered_rows,
             value_input_option="USER_ENTERED"
         )
 
-        logger.info(
-            f"Added {len(filtered_rows)} new leads"
-        )
-
-        return True
+        return {"added": len(filtered_rows), "skipped": duplicate_count}
 
     except Exception as error:
 

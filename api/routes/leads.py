@@ -71,23 +71,27 @@ def bulk_upload_leads(leads: List[NewLead], current_user: User = Depends(get_cur
             new_id = f"L-{datetime.now().strftime('%Y%m%d%H%M%S')}-{len(formatted_leads_for_sheets)}"
             
             row = [
-                new_id,                 # lead_id
-                lead.name,              # name
-                lead.email,             # email
-                lead.company,           # company
-                lead.tier,              # tier
-                lead.subject_line,      # subject_line
-                "",                     # email_sent_at
-                0,                      # sequence_step
-                False,                  # replied
-                False                   # opt_out
+                new_id,                 # col 1: lead_id
+                lead.name,              # col 2: name
+                lead.email,             # col 3: email
+                lead.company,           # col 4: company
+                "",                     # col 5: email_sent_at
+                0,                      # col 6: sequence_step
+                False,                  # col 7: replied
+                lead.tier,              # col 8: tier
+                lead.subject_line,      # col 9: subject_line
+                False                   # col 10: opt_out
             ]
             formatted_leads_for_sheets.append(row)
         
         # Hand off the formatted list to the database module
-        sheets.bulk_add_leads(formatted_leads_for_sheets)
+        result = sheets.bulk_add_leads(formatted_leads_for_sheets)
+
+        msg = f"Successfully added {result['added']} lead(s)."
+        if result["skipped"] > 0:
+            msg += f" {result['skipped']} duplicate(s) skipped."
         
-        return {"status": "success", "message": f"Successfully queued {len(leads)} leads."}
+        return {"status": "success", "message": msg, **result}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

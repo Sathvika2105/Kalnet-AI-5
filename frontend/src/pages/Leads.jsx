@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useLeads } from '../hooks/usePolling'
 import DataTable from '../components/DataTable'
-import { RefreshCw } from 'lucide-react'
+import BulkUploadModal from '../components/BulkUploadModal'
+import { RefreshCw, Upload } from 'lucide-react'
 
 export default function Leads() {
   const [filters, setFilters] = useState({ replied: '', opt_out: '', step: '' })
+  const [showUpload, setShowUpload] = useState(false)
   const { data, loading, lastUpdated, refresh } = useLeads(filters)
 
   const leads = data?.leads || []
@@ -54,14 +56,29 @@ export default function Leads() {
             )}
           </p>
         </div>
-        <button
-          onClick={refresh}
-          className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors text-sm"
-        >
-          <RefreshCw size={16} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowUpload(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors text-sm"
+          >
+            <Upload size={16} />
+            Bulk Upload
+          </button>
+          <button
+            onClick={refresh}
+            className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-lg transition-colors text-sm"
+          >
+            <RefreshCw size={16} />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      <BulkUploadModal
+        isOpen={showUpload}
+        onClose={() => setShowUpload(false)}
+        onSuccess={refresh}
+      />
 
       <div className="flex gap-4">
         <select

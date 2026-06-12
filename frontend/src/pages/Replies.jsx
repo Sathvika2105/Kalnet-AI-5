@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useReplies } from '../hooks/usePolling'
-import { MessageSquare, UserCheck, UserX, RefreshCw } from 'lucide-react'
+import { MessageSquare, UserCheck, UserX, RefreshCw, Mail } from 'lucide-react'
 import KPICard from '../components/KPICard'
 
 export default function Replies() {
@@ -67,34 +67,47 @@ export default function Replies() {
             No replies found
           </div>
         ) : (
-          filtered.map((reply, i) => (
-            <div key={i} className="bg-card-bg rounded-xl border border-card-border p-6">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="font-semibold text-white">{reply.name}</h3>
-                  <p className="text-sm text-slate-400">{reply.email}</p>
-                  <p className="text-sm text-slate-500">{reply.company}</p>
+          filtered.map((reply, i) => {
+            const content = reply.reply_snippet || ''
+
+            return (
+              <div key={i} className="bg-card-bg rounded-xl border border-card-border p-6">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="font-semibold text-white">{reply.name}</h3>
+                    <p className="text-sm text-slate-400">{reply.email}</p>
+                    <p className="text-sm text-slate-500">{reply.company}</p>
+                  </div>
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                    reply.opt_out
+                      ? 'bg-red-500/20 text-red-400'
+                      : 'bg-green-500/20 text-green-400'
+                  }`}>
+                    {reply.opt_out ? 'Unsubscribed' : 'Positive'}
+                  </span>
                 </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                  reply.opt_out
-                    ? 'bg-red-500/20 text-red-400'
-                    : 'bg-green-500/20 text-green-400'
-                }`}>
-                  {reply.opt_out ? 'Unsubscribed' : 'Positive'}
-                </span>
-              </div>
-              {reply.reply_snippet && (
-                <div className="mt-4 p-3 bg-slate-800 rounded-lg">
-                  <p className="text-sm text-slate-300">"{reply.reply_snippet}"</p>
+
+                {reply.subject_line && (
+                  <div className="mt-3 flex items-center gap-2 text-sm text-blue-400">
+                    <Mail size={14} />
+                    <span>{reply.subject_line}</span>
+                  </div>
+                )}
+
+                {content && (
+                  <div className="mt-3 p-3 bg-slate-800 rounded-lg">
+                    <p className="text-sm text-slate-300">{content}</p>
+                  </div>
+                )}
+
+                <div className="mt-3 flex gap-4 text-xs text-slate-500">
+                  <span>Sent: {reply.email_sent_at || 'N/A'}</span>
+                  <span>Step: {reply.sequence_step}</span>
+                  <span>Tier: {reply.tier || 'N/A'}</span>
                 </div>
-              )}
-              <div className="mt-3 flex gap-4 text-xs text-slate-500">
-                <span>Sent: {reply.email_sent_at || 'N/A'}</span>
-                <span>Step: {reply.sequence_step}</span>
-                <span>Tier: {reply.tier || 'N/A'}</span>
               </div>
-            </div>
-          ))
+            )
+          })
         )}
       </div>
     </div>
