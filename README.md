@@ -24,6 +24,4 @@ Access Level: Authorized team members only
 Contains: Lead information, email history, reply data, tier classification
 Who Can Access: Project managers, data analysts, core team members
 
-GITHUB REPO LINK: https://github.com/Sathvika2105/Kalnet-AI-5
-
 Thank You.
