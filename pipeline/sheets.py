@@ -149,6 +149,70 @@ def get_lead_by_id(lead_id):
 
     return None
 
+# BULK ADD LEADS
+def bulk_add_leads(list_of_rows):
+    """
+    Add multiple leads to Google Sheets in a single API call.
+
+    Prevents duplicate emails from being added.
+    """
+
+    try:
+
+        # Get existing emails from sheet
+        records = sheet.get_all_records()
+
+        existing_emails = {
+            str(row.get("email", "")).strip().lower()
+            for row in records
+            if row.get("email")
+        }
+
+        filtered_rows = []
+
+        for row in list_of_rows:
+
+            # Email column = index 2
+            email = str(row[2]).strip().lower()
+
+            if email in existing_emails:
+
+                logger.warning(
+                    f"Duplicate email skipped: {email}"
+                )
+
+                continue
+
+            existing_emails.add(email)
+
+            filtered_rows.append(row)
+
+        if not filtered_rows:
+
+            logger.info(
+                "No new leads added (all duplicates)"
+            )
+
+            return True
+
+        sheet.append_rows(
+            filtered_rows,
+            value_input_option="USER_ENTERED"
+        )
+
+        logger.info(
+            f"Added {len(filtered_rows)} new leads"
+        )
+
+        return True
+
+    except Exception as error:
+
+        logger.error(
+            f"Failed to bulk add leads: {error}"
+        )
+
+        return False
 
 # MARK EMAIL SENT
 def mark_email_sent(
