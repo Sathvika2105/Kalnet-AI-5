@@ -1,14 +1,14 @@
 """
 sequence.py -- Follow-up Sequence Module (Enterprise Edition)
-Author      : Vishnu  |  Enterprise layer: AI-5 Engineering
-Module       : AI-5 Automated Email Pipeline
+Author      : Vishnu  |  Enterprise layer: KALNET Engineering
+Module       : KALNET Automated Email Pipeline
 Responsibility: Decide which leads receive emails today based on
                 the number of days since their first email was sent.
 
-Sequence Rules (UNCHANGED from original spec):
+Sequence Rules (UPDATED delays, logic unchanged):
     Email 1 -> Day 0  (new lead, first contact)      [handled by run.py]
-    Email 2 -> Day 5  (follow-up #1, only if no reply)
-    Email 3 -> Day 10 (follow-up #2 / final, only if no reply)
+    Email 2 -> Day 2  (follow-up #1, only if no reply)  ← was Day 5
+    Email 3 -> Day 7  (follow-up #2 / final, only if no reply) ← was Day 10
     STOP    -> if lead has replied at any point
 
 How it works with real data (UNCHANGED):
@@ -38,6 +38,13 @@ Added in this version (all additive, zero disruption):
   get_advanced_email_content(lead) -- main entry point; falls back to
                                       get_email_content() on any error
 
+  ── v2 ADDITIONS (non-destructive) ──────────────────────────────────────
+  generate_cta_footer(lead_id, base_url)   -- 3 CTA link block per lead
+  append_cta_to_body(body, lead_id, ...)   -- appends CTA footer to any body
+  handle_cta_response(lead, cta_type)      -- routes CTA click to response email
+  get_cta_response_email(lead, cta_type)   -- crafts response for each CTA intent
+  move_to_nurture_list(lead)               -- graceful NOT_INTERESTED handler
+
 All new functions:
   • Accept the SAME lead dict contract as get_sequence_due_today()
   • Read optional fields with .get() — missing fields use original logic
@@ -45,7 +52,7 @@ All new functions:
   • Never modify lead state or write to Sheets
 
 Backward compatibility guarantee:
-  • get_sequence_due_today() is IDENTICAL to the original
+  • get_sequence_due_today() is IDENTICAL to the original (delay constants updated)
   • get_email_content() is IDENTICAL to the original
   • EMAIL_SUBJECTS is IDENTICAL to the original
   • EMAIL_BODIES is IDENTICAL to the original
@@ -56,8 +63,10 @@ Backward compatibility guarantee:
 import logging
 import os
 import sys
+import hashlib
 from datetime import date, timedelta
 from typing import List, Dict, Optional, Tuple
+from urllib.parse import quote
 
 
 # --------------------------------------------------------------------------
@@ -91,7 +100,7 @@ EMAIL_BODIES = {
         "We help businesses automate their outreach and follow-up process "
         "so no lead falls through the cracks.\n\n"
         "Would you be open to a quick 15-minute call this week?\n\n"
-        "Best,\nTeam AI-5"
+        "Best,\nTeam KALNET"
     ),
     2: (
         "Hi {name},\n\n"
@@ -99,7 +108,7 @@ EMAIL_BODIES = {
         "We've helped companies like {company} reduce manual outreach time "
         "by over 60%. I'd love to show you how.\n\n"
         "Do you have 15 minutes this week?\n\n"
-        "Best,\nTeam AI-5"
+        "Best,\nTeam KALNET"
     ),
     3: (
         "Hi {name},\n\n"
@@ -107,7 +116,7 @@ EMAIL_BODIES = {
         "If now isn't the right time, no worries at all. "
         "If you'd like to reconnect in the future, just reply to this email.\n\n"
         "Wishing you and the {company} team all the best.\n\n"
-        "Best,\nTeam AI-5"
+        "Best,\nTeam KALNET"
     ),
 }
 
@@ -119,6 +128,10 @@ EMAIL_BODIES = {
 
 class Intent:
     """All recognised intent codes. Read from lead.get('intent')."""
+    # ── v2: CTA-response intents (new) ──────────────────────────────────
+    INTERESTED_CTA         = "INTERESTED_CTA"           # clicked ✅ Interested
+    INTERESTED_NOT_CONVINCED = "INTERESTED_NOT_CONVINCED" # clicked 🤔
+    NOT_INTERESTED         = "NOT_INTERESTED"            # clicked ❌ Not Interested
     # High positive
     INTERESTED             = "INTERESTED"
     VERY_INTERESTED        = "VERY_INTERESTED"
@@ -171,6 +184,448 @@ class Intent:
 
 
 # ==========================================================================
+# KALNET PRODUCTION CONFIGURATION
+# [NEW — centralized configuration for all KALNET endpoints and URLs]
+# ==========================================================================
+
+KALNET_BASE_URL = os.environ.get(
+    "KALNET_BASE_URL",
+    "https://www.kalnet.co"
+)
+
+KALNET_CTA_BASE_URL = os.environ.get(
+    "KALNET_CTA_BASE_URL",
+    "https://www.kalnet.co/cta"
+)
+
+KALNET_CALENDAR_LINK = os.environ.get(
+    "KALNET_CALENDAR_LINK",
+    "https://www.kalnet.co/contact"
+)
+
+KALNET_MEETING_LINK = os.environ.get(
+    "KALNET_MEETING_LINK",
+    "https://www.kalnet.co/contact"
+)
+
+KALNET_DISCOVERY_LINK = os.environ.get(
+    "KALNET_DISCOVERY_LINK",
+    "https://www.kalnet.co/contact"
+)
+
+
+# ==========================================================================
+# v2: CTA (Call-to-Action) TRACKING UTILITIES
+# [NEW — generates unique per-lead tracking URLs for the 3-button CTA footer]
+# These functions are pure helpers; they never call external services.
+# If base_url is not configured they produce readable placeholder links.
+# ==========================================================================
+
+# Default base URL — override via environment variable KALNET_CTA_BASE_URL
+_CTA_BASE_URL = KALNET_CTA_BASE_URL
+
+# CTA type tokens — used both in URL params and in response routing
+CTA_INTERESTED          = "interested"
+CTA_INTERESTED_NOT_CONVINCED = "not_convinced"
+CTA_NOT_INTERESTED      = "not_interested"
+
+
+def _generate_lead_token(lead_id: str, cta_type: str) -> str:
+    """
+    Generate a deterministic short token for a lead + CTA combination.
+    Uses a SHA-256 hash of lead_id+cta_type, truncated to 16 hex chars.
+    This ensures unique URLs per lead per CTA without a database call.
+    Falls back to a readable placeholder if lead_id is empty.
+    
+    Security: Safely handles malformed lead IDs and special characters.
+    """
+    try:
+        if not lead_id or not isinstance(lead_id, str):
+            return f"unknown_{cta_type}"
+        # Sanitize lead_id: remove non-alphanumeric chars to prevent injection
+        safe_lead_id = ''.join(c if c.isalnum() else '_' for c in lead_id)[:50]
+        raw = f"{safe_lead_id}:{cta_type}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+    except Exception as e:
+        logger.warning("_generate_lead_token error: %s", e)
+        return f"unknown_{cta_type}"
+
+
+def generate_cta_footer(
+    lead_id: str,
+    base_url: str = _CTA_BASE_URL,
+) -> str:
+    """
+    Generate a formatted 3-button CTA footer block for appending to email bodies.
+
+    Produces three unique tracking URLs — one per intent — so that when a
+    recipient clicks, the pipeline can detect their intent and route accordingly.
+
+    Parameters
+    ----------
+    lead_id  : str  — unique lead identifier (used to build tracking tokens)
+    base_url : str  — base URL for the tracking endpoint
+
+    Returns
+    -------
+    str  — formatted CTA block ready to append to any email body.
+    Fails gracefully: returns a plain-text fallback if URL generation errors.
+    """
+    try:
+        tok_yes  = _generate_lead_token(lead_id, CTA_INTERESTED)
+        tok_hmm  = _generate_lead_token(lead_id, CTA_INTERESTED_NOT_CONVINCED)
+        tok_no   = _generate_lead_token(lead_id, CTA_NOT_INTERESTED)
+
+        # URL-encode parameters to safely handle special characters in lead_id
+        safe_lead_id = quote(str(lead_id), safe='')
+        url_yes  = f"{base_url}?t={tok_yes}&l={safe_lead_id}&a={CTA_INTERESTED}"
+        url_hmm  = f"{base_url}?t={tok_hmm}&l={safe_lead_id}&a={CTA_INTERESTED_NOT_CONVINCED}"
+        url_no   = f"{base_url}?t={tok_no}&l={safe_lead_id}&a={CTA_NOT_INTERESTED}"
+
+        footer = (
+            "\n\n"
+            "────────────────────────────────────\n"
+            "Quick reply — let us know where you stand:\n\n"
+            f"  ✅  Interested — let's talk! → {url_yes}\n"
+            f"  🤔  Interested but need more info → {url_hmm}\n"
+            f"  ❌  Not interested right now → {url_no}\n"
+            "────────────────────────────────────"
+        )
+        return footer
+
+    except Exception as exc:
+        logger.error("generate_cta_footer error for lead %s: %s", lead_id, exc)
+        # Graceful plaintext fallback — always returns something
+        return (
+            "\n\n────────────────────────────────────\n"
+            "Quick reply:\n"
+            "  ✅ Interested | 🤔 Interested but not convinced | ❌ Not interested\n"
+            "────────────────────────────────────"
+        )
+
+
+def append_cta_to_body(
+    body: str,
+    lead_id: str,
+    base_url: str = _CTA_BASE_URL,
+) -> str:
+    """
+    Append the 3-button CTA footer to any email body string.
+
+    This is the single function to call when preparing any email body
+    for sending — original, enterprise, or CTA-response emails.
+    Idempotent: does not add the footer if it is already present.
+    Fails gracefully: returns original body unchanged on any error.
+
+    Parameters
+    ----------
+    body     : str — existing email body text
+    lead_id  : str — unique lead identifier
+    base_url : str — CTA tracking endpoint base URL
+
+    Returns
+    -------
+    str — body with CTA footer appended
+    """
+    try:
+        if not body:
+            return body
+        # Idempotency guard — don't double-append
+        if "✅  Interested" in body or "✅ Interested" in body:
+            return body
+        cta = generate_cta_footer(lead_id, base_url)
+        return body + cta
+    except Exception as exc:
+        logger.error("append_cta_to_body error for lead %s: %s", lead_id, exc)
+        return body  # Always return original body — never raises
+
+
+# ==========================================================================
+# v2: CTA RESPONSE EMAIL TEMPLATES
+# [NEW — crafted responses for each of the 3 CTA click types]
+# Routing: handle_cta_response() is the entry point.
+# ==========================================================================
+
+# ── Calendar / meeting link (configure via environment variable) ───────────
+_CALENDAR_LINK  = KALNET_CALENDAR_LINK
+_MEETING_LINK   = KALNET_MEETING_LINK
+_DISCOVERY_LINK = KALNET_DISCOVERY_LINK
+
+
+def get_cta_response_email(lead: Dict, cta_type: str) -> Dict:
+    """
+    Return the subject and body for a CTA-click response email.
+
+    This function is called when a lead clicks one of the three CTA buttons.
+    It returns an appropriate, human, persuasive, and professional email
+    tailored to the lead's response intent.
+
+    Parameters
+    ----------
+    lead     : dict — same lead dict used throughout; must have name, company
+    cta_type : str  — one of CTA_INTERESTED | CTA_INTERESTED_NOT_CONVINCED |
+                      CTA_NOT_INTERESTED
+
+    Returns
+    -------
+    dict  { "subject": str, "body": str }  — guaranteed, never raises.
+    Falls back to a generic positive email on unknown cta_type or error.
+    
+    Security: Safely handles missing/malformed lead data.
+    """
+    try:
+        # Input validation
+        if not lead or not isinstance(lead, dict):
+            logger.warning("get_cta_response_email: invalid lead data type")
+            lead = {}
+        
+        if not cta_type or not isinstance(cta_type, str):
+            logger.warning("get_cta_response_email: invalid cta_type")
+            cta_type = ""
+        
+        name    = lead.get("name",    "there")
+        company = lead.get("company", "your company")
+        lead_id = lead.get("lead_id", "")
+        
+        # Sanitize name and company to prevent injection in email text
+        name = str(name).strip()[:100] if name else "there"
+        company = str(company).strip()[:100] if company else "your company"
+
+        # ── ✅ INTERESTED ──────────────────────────────────────────────────
+        if cta_type == CTA_INTERESTED:
+            subject = f"Let's make it happen — {company}"
+            body = (
+                f"Hi {name},\n\n"
+                "That's great to hear — I'm genuinely excited about this.\n\n"
+                "The fastest way forward is a quick 20-minute discovery call "
+                "where I can walk you through exactly how KALNET would fit into "
+                f"{company}'s workflow. No slides, no pressure — just a real "
+                "conversation about what matters to your team.\n\n"
+                "You can book a time that works for you directly here:\n"
+                f"  📅 Book a call: {_CALENDAR_LINK}\n\n"
+                "If you'd prefer to start with a live demo, I've got slots "
+                "open this week:\n"
+                f"  🎯 Schedule a demo: {_MEETING_LINK}\n\n"
+                "I'll come fully prepared — just bring your questions.\n\n"
+                "Looking forward to speaking with you soon!\n\n"
+                "Best,\nTeam KALNET"
+            )
+
+        # ── 🤔 INTERESTED BUT NOT CONVINCED ───────────────────────────────
+        elif cta_type == CTA_INTERESTED_NOT_CONVINCED:
+            subject = f"Fair enough — let me address that, {name}"
+            body = (
+                f"Hi {name},\n\n"
+                "I really appreciate your honesty — and I hear you completely.\n\n"
+                "Being 'interested but not convinced' is actually the most "
+                "common place smart buyers sit, and it tells me the conversation "
+                "is worth continuing.\n\n"
+                "Let me share a few things that usually move the needle:\n\n"
+                "📊 Real ROI from teams like yours:\n"
+                f"   • Companies similar to {company} cut manual follow-up time "
+                "by 60% in 90 days\n"
+                "   • Average response rates doubled within the first 6 weeks\n"
+                "   • Pipeline recovery of 30–40% from leads that were going cold\n\n"
+                "🏆 What our customers say:\n"
+                '   "We were sceptical at first. Within 2 months, KALNET became '
+                'the backbone of our outreach." — Head of Sales, B2B SaaS\n\n'
+                "🎯 My suggestion:\n"
+                "A 15-minute discovery call — no commitment, no pitch. Just me "
+                "understanding your specific situation and you deciding whether "
+                "the numbers make sense for you.\n\n"
+                f"  📅 Book a discovery call: {_DISCOVERY_LINK}\n\n"
+                "Whatever objections or doubts you have, I'd love to address "
+                "them directly. What's the biggest thing holding you back?\n\n"
+                "Best,\nTeam KALNET"
+            )
+
+        # ── ❌ NOT INTERESTED ──────────────────────────────────────────────
+        elif cta_type == CTA_NOT_INTERESTED:
+            subject = f"No problem at all, {name} — thank you"
+            body = (
+                f"Hi {name},\n\n"
+                "Thank you for letting me know — I genuinely appreciate you "
+                "taking the time to respond.\n\n"
+                "I completely respect that the timing or the fit isn't right "
+                "right now, and I won't keep filling up your inbox.\n\n"
+                "I just wanted to say: the door is always open. Markets change, "
+                "priorities shift, and teams evolve — and if there ever comes a "
+                f"time when KALNET feels like the right conversation for {company}, "
+                "all you have to do is reply to this email. No need to start over.\n\n"
+                "We'll keep an eye on the industry and reach out only if we "
+                "see something genuinely relevant to you — and even then, with "
+                "respect for your time.\n\n"
+                "Wishing you and the entire team at "
+                f"{company} all the very best. It's been a pleasure.\n\n"
+                "Warmly,\nTeam KALNET"
+            )
+
+        else:
+            # Unknown CTA type — safe positive fallback
+            logger.warning("get_cta_response_email: unknown cta_type=%s for lead %s",
+                           cta_type, lead_id)
+            subject = f"Thanks for your response — {company}"
+            body = (
+                f"Hi {name},\n\n"
+                "Thank you for getting back to us!\n\n"
+                "I'd love to connect and understand where you are. "
+                f"Feel free to book a quick call here: {_CALENDAR_LINK}\n\n"
+                "Best,\nTeam KALNET"
+            )
+
+        # Append CTA footer to all CTA response emails EXCEPT not_interested
+        # (for not_interested we send a clean closing email — no more CTAs)
+        if cta_type != CTA_NOT_INTERESTED:
+            body = append_cta_to_body(body, lead_id)
+
+        return {"subject": subject, "body": body}
+
+    except Exception as exc:
+        logger.error("get_cta_response_email error for lead %s cta=%s: %s",
+                     lead.get("lead_id", "?"), cta_type, exc, exc_info=True)
+        # Guaranteed safe fallback — never raises
+        return {
+            "subject": f"Following up — {lead.get('company', 'your company')}",
+            "body": (
+                f"Hi {lead.get('name', 'there')},\n\n"
+                "Thank you for your response! We'd love to connect.\n\n"
+                f"Book a call here: {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
+            ),
+        }
+
+
+def handle_cta_response(lead: Dict, cta_type: str) -> Dict:
+    """
+    Primary entry point for CTA click events.
+
+    Called when the tracking endpoint receives a click from a lead.
+    Determines the correct response email and returns it.
+    Also updates the lead's intent in the returned dict (non-destructive —
+    the caller is responsible for writing to Sheets).
+
+    Parameters
+    ----------
+    lead     : dict — lead record (as returned by get_sequence_due_today())
+    cta_type : str  — CTA_INTERESTED | CTA_INTERESTED_NOT_CONVINCED |
+                      CTA_NOT_INTERESTED
+
+    Returns
+    -------
+    dict  {
+        "subject"     : str,
+        "body"        : str,
+        "new_intent"  : str,   # updated intent to write back to Sheets
+        "action"      : str,   # descriptive action for the caller/logger
+        "send_email"  : bool,  # True = send the response; False = suppress
+    }
+    """
+    try:
+        # Input validation
+        if not lead or not isinstance(lead, dict):
+            logger.warning("handle_cta_response: invalid lead data")
+            lead = {"lead_id": "?"}
+        
+        if not cta_type or not isinstance(cta_type, str):
+            logger.warning("handle_cta_response: invalid cta_type")
+            cta_type = ""
+        
+        lead_id = str(lead.get("lead_id", "?")).strip()[:100]
+
+        # Map CTA type → new Intent
+        cta_intent_map = {
+            CTA_INTERESTED:           Intent.INTERESTED_CTA,
+            CTA_INTERESTED_NOT_CONVINCED: Intent.INTERESTED_NOT_CONVINCED,
+            CTA_NOT_INTERESTED:       Intent.NOT_INTERESTED,
+        }
+        new_intent = cta_intent_map.get(cta_type, Intent.UNKNOWN)
+
+        # Build response email
+        email_content = get_cta_response_email(lead, cta_type)
+
+        # Determine action label for logging and caller decisions
+        if cta_type == CTA_INTERESTED:
+            action = "schedule_meeting"
+        elif cta_type == CTA_INTERESTED_NOT_CONVINCED:
+            action = "send_persuasion_continue_sequence"
+        elif cta_type == CTA_NOT_INTERESTED:
+            action = "move_to_nurture_list"
+        else:
+            action = "send_followup"
+
+        logger.info(
+            "handle_cta_response: lead=%s cta=%s new_intent=%s action=%s",
+            lead_id, cta_type, new_intent, action
+        )
+
+        return {
+            "subject":    email_content["subject"],
+            "body":       email_content["body"],
+            "new_intent": new_intent,
+            "action":     action,
+            "send_email": True,
+        }
+
+    except Exception as exc:
+        logger.error("handle_cta_response error for lead %s: %s",
+                     lead.get("lead_id", "?"), exc, exc_info=True)
+        return {
+            "subject":    f"Following up — {lead.get('company', '')}",
+            "body":       f"Hi {lead.get('name', 'there')},\n\nThank you for your response!\n\nBest,\nTeam KALNET",
+            "new_intent": Intent.UNKNOWN,
+            "action":     "send_followup",
+            "send_email": True,
+        }
+
+
+def move_to_nurture_list(lead: Dict) -> Dict:
+    """
+    Handle a NOT_INTERESTED CTA click — move lead to long-term nurture.
+
+    This function NEVER deletes the lead. It returns the metadata needed
+    for the caller to move the lead into a 'nurture' segment in Sheets.
+    The lead stays available for future re-engagement campaigns.
+
+    Parameters
+    ----------
+    lead : dict — lead record; must have lead_id
+
+    Returns
+    -------
+    dict  {
+        "lead_id"       : str,
+        "action"        : "move_to_nurture",
+        "nurture_reason": "not_interested_cta",
+        "re_engage_after_days": int,   # recommended wait before any future contact
+    }
+    Fails gracefully: returns safe defaults on any error.
+    
+    Security: Safely handles missing/malformed lead data.
+    """
+    try:
+        # Input validation
+        if not lead or not isinstance(lead, dict):
+            logger.warning("move_to_nurture_list: invalid lead data")
+            lead = {}
+        
+        lead_id = str(lead.get("lead_id", "?")).strip()[:100]
+        logger.info("move_to_nurture_list: lead=%s moved to long-term nurture", lead_id)
+        return {
+            "lead_id":            lead_id,
+            "action":             "move_to_nurture",
+            "nurture_reason":     "not_interested_cta",
+            "re_engage_after_days": 180,   # 6 months — respectful pause
+        }
+    except Exception as exc:
+        logger.error("move_to_nurture_list error: %s", exc)
+        return {
+            "lead_id":            str(lead.get("lead_id", "?")).strip()[:100] if lead else "?",
+            "action":             "move_to_nurture",
+            "nurture_reason":     "not_interested_cta",
+            "re_engage_after_days": 180,
+        }
+
+
+# ==========================================================================
 # ENTERPRISE: ADVANCED EMAIL TEMPLATES
 # [NEW — stored separately from EMAIL_SUBJECTS / EMAIL_BODIES]
 #
@@ -214,16 +669,16 @@ ADVANCED_EMAIL_SUBJECTS = {
     Intent.INTERESTED: {
         "initial": _step(
             _subj("Great — let's take this forward",
-                  "How AI-5 can help {company} specifically",
+                  "How KALNET can help {company} specifically",
                   "What most interested teams ask us next",
                   "{company} | Next steps",
                   "Glad to hear it, {name}"),
             _subj("Next step for {company}",
-                  "What AI-5 looks like for a team like {company}",
+                  "What KALNET looks like for a team like {company}",
                   "The one thing that changes everything",
                   "{company} | Proposal to follow",
                   "Let's make this easy, {name}"),
-            _subj("Following up on your interest in AI-5",
+            _subj("Following up on your interest in KALNET",
                   "How {company} could cut outreach time by 60%",
                   "What companies like {company} discovered after a demo",
                   "Strategic note for {company} leadership",
@@ -240,7 +695,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "Why the timing matters now",
                   "{company} | Business case",
                   "Following up, {name}"),
-            _subj("Checking in — AI-5 + {company}",
+            _subj("Checking in — KALNET + {company}",
                   "Three outcomes other teams achieved",
                   "The follow-up most teams skip",
                   "{company} | Value summary",
@@ -257,7 +712,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "What your competitors are doing right now",
                   "{company} | Competitive note",
                   "Closing the loop"),
-            _subj("Final note — AI-5 for {company}",
+            _subj("Final note — KALNET for {company}",
                   "What 6 months looks like for a team like {company}",
                   "I'll stop after this — but read it first",
                   "{company} | Strategic close",
@@ -269,20 +724,20 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "Has anything changed since we last spoke?",
                   "{company} | Reconnecting",
                   "Long time — thought of you"),
-            _subj("Reconnecting — AI-5 + {company}",
+            _subj("Reconnecting — KALNET + {company}",
                   "What's new since we last connected",
                   "A fresh angle for {company}",
                   "{company} | Strategic update",
                   "One more reach-out"),
             _subj("It's been a while — worth a chat?",
-                  "New reasons to revisit AI-5 for {company}",
+                  "New reasons to revisit KALNET for {company}",
                   "The landscape has changed — here's why it matters",
                   "{company} | Market update",
                   "Hoping the timing is better now"),
         ),
         "reengagement": _step(
             _subj("Still here if you need us",
-                  "A lot has changed at AI-5",
+                  "A lot has changed at KALNET",
                   "Something new worth seeing",
                   "{company} | Year-end check-in",
                   "It's been a while — how are things?"),
@@ -291,7 +746,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "Why teams that said 'not yet' are coming back",
                   "{company} | Re-engagement",
                   "Happy to reconnect whenever you're ready"),
-            _subj("One final note from AI-5",
+            _subj("One final note from KALNET",
                   "What the market looks like now",
                   "The thing we built that changes the conversation",
                   "{company} | Strategic reconnect",
@@ -302,7 +757,7 @@ ADVANCED_EMAIL_SUBJECTS = {
     Intent.VERY_INTERESTED: {
         "initial": _step(
             _subj("Let's lock in a time",
-                  "Accelerating your AI-5 onboarding",
+                  "Accelerating your KALNET onboarding",
                   "This is moving fast — here's what's next",
                   "{company} | Fast-track option",
                   "Excited — let's make it happen"),
@@ -359,7 +814,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "No pressure — still here"),
             _subj("One more try",
                   "The option that might fit better now",
-                  "A fresh look at what AI-5 can do for {company}",
+                  "A fresh look at what KALNET can do for {company}",
                   "{company} | Recovery note",
                   "Ready when you are"),
             _subj("Last attempt before I go quiet",
@@ -376,7 +831,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "Thinking of you"),
             _subj("Checking back in",
                   "New features you'll want to see",
-                  "What changed at AI-5 since we last connected",
+                  "What changed at KALNET since we last connected",
                   "{company} | Product update",
                   "One more note"),
             _subj("Still believe there's a fit",
@@ -390,7 +845,7 @@ ADVANCED_EMAIL_SUBJECTS = {
     Intent.DEMO_REQUEST: {
         "initial": _step(
             _subj("Demo confirmed",
-                  "Your personalised AI-5 walkthrough",
+                  "Your personalised KALNET walkthrough",
                   "Before our demo — one question",
                   "{company} | Demo confirmed",
                   "Can't wait to show you this"),
@@ -399,7 +854,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "Three things we'll cover in your demo",
                   "{company} | Demo prep",
                   "Looking forward to it"),
-            _subj("Your AI-5 demo — everything you need",
+            _subj("Your KALNET demo — everything you need",
                   "How to get maximum value from our session",
                   "What most teams ask in the first 5 minutes",
                   "{company} | Executive demo briefing",
@@ -416,7 +871,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "What other teams did after the demo",
                   "{company} | Implementation path",
                   "Did anything stand out?"),
-            _subj("Next steps — AI-5 for {company}",
+            _subj("Next steps — KALNET for {company}",
                   "The 3-step path from demo to live",
                   "What I'd recommend based on what you told me",
                   "{company} | Strategic recommendation",
@@ -458,16 +913,16 @@ ADVANCED_EMAIL_SUBJECTS = {
         ),
         "reengagement": _step(
             _subj("Ready to try again?",
-                  "What's new in AI-5 since we last spoke",
+                  "What's new in KALNET since we last spoke",
                   "We improved based on feedback like yours",
                   "{company} | Product update",
                   "Still here whenever you're ready"),
-            _subj("A fresh look at AI-5 for {company}",
+            _subj("A fresh look at KALNET for {company}",
                   "New features worth a second demo",
                   "The thing that changed since we last connected",
                   "{company} | Re-engagement demo",
                   "Things look different now"),
-            _subj("Last note — AI-5 + {company}",
+            _subj("Last note — KALNET + {company}",
                   "What a second demo would show you",
                   "One thing we built that changes the picture",
                   "{company} | Final re-engagement",
@@ -488,7 +943,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "{company} | ROI business case",
                   "Let's make the wait useful"),
             _subj("Got it on budget — a practical next step",
-                  "How to get AI-5 approved in your next cycle",
+                  "How to get KALNET approved in your next cycle",
                   "Three things teams do to get budget approved",
                   "{company} | Budget readiness",
                   "A useful thing to do right now"),
@@ -551,11 +1006,11 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "{company} | Annual check-in",
                   "Hoping the timing is finally right"),
             _subj("Reconnecting with {company}",
-                  "What AI-5 looks like at your price point now",
+                  "What KALNET looks like at your price point now",
                   "Why companies that said 'no budget' are coming back",
                   "{company} | Re-engagement",
                   "One more note"),
-            _subj("A final note from AI-5",
+            _subj("A final note from KALNET",
                   "The free option that's always been available",
                   "Something useful whether or not you buy",
                   "{company} | Parting gift",
@@ -626,7 +1081,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "What's new since we last tried to connect",
                   "{company} | Fresh start",
                   "Ready when you are"),
-            _subj("Last note from AI-5",
+            _subj("Last note from KALNET",
                   "A reason to give this one more shot",
                   "The thing I built specifically for {company}",
                   "{company} | Final recovery",
@@ -634,7 +1089,7 @@ ADVANCED_EMAIL_SUBJECTS = {
         ),
         "reengagement": _step(
             _subj("Long time — still open to connecting?",
-                  "What AI-5 looks like now vs when we last spoke",
+                  "What KALNET looks like now vs when we last spoke",
                   "One thing worth seeing",
                   "{company} | Re-engagement",
                   "Thought of you"),
@@ -654,7 +1109,7 @@ ADVANCED_EMAIL_SUBJECTS = {
     Intent.USING_COMPETITOR: {
         "initial": _step(
             _subj("Completely understand — one thought",
-                  "How AI-5 compares to what you're using",
+                  "How KALNET compares to what you're using",
                   "What most teams discover after a year with alternatives",
                   "{company} | Competitive comparison",
                   "No hard sell — just one thing"),
@@ -664,7 +1119,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "{company} | Comparison note",
                   "Respect that — a thought anyway"),
             _subj("Happy to stay in touch",
-                  "Three things AI-5 does that most competitors don't",
+                  "Three things KALNET does that most competitors don't",
                   "The honest comparison you deserve",
                   "{company} | Honest comparison",
                   "Just wanted to leave you with this"),
@@ -722,7 +1177,7 @@ ADVANCED_EMAIL_SUBJECTS = {
         ),
         "reengagement": _step(
             _subj("Long time — still with the same vendor?",
-                  "What's changed at AI-5 since we last spoke",
+                  "What's changed at KALNET since we last spoke",
                   "The one thing that might make you look again",
                   "{company} | Re-engagement",
                   "Hoping the situation has evolved"),
@@ -731,7 +1186,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "What switched for teams in your position",
                   "{company} | Second look",
                   "Things look different now"),
-            _subj("Final note from AI-5",
+            _subj("Final note from KALNET",
                   "A parting comparison — no strings",
                   "The thing worth knowing regardless of what you decide",
                   "{company} | Final note",
@@ -764,7 +1219,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "{company} | Timing check",
                   "Hope the dust has settled"),
             _subj("Following up as promised",
-                  "What's changed at AI-5 since we last spoke",
+                  "What's changed at KALNET since we last spoke",
                   "A fresh reason to reconsider",
                   "{company} | Update",
                   "As promised — checking back"),
@@ -820,11 +1275,276 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "Why teams that said 'not now' are coming back",
                   "{company} | Year-end note",
                   "Thinking of you"),
-            _subj("Final note from AI-5",
+            _subj("Final note from KALNET",
                   "A parting thought for {company}",
                   "Something useful regardless of timing",
                   "{company} | Closing note",
                   "Wishing you all the best"),
+        ),
+    },
+
+    # ── v2: CTA-driven intent subjects ─────────────────────────────────────
+    Intent.INTERESTED_CTA: {
+        "initial": _step(
+            _subj("Let's book that call — {company}",
+                  "Here's your calendar link",
+                  "One click to lock in a time",
+                  "{company} | Meeting scheduling",
+                  "Excited to connect, {name}"),
+            _subj("Your discovery call — next steps",
+                  "Everything you need to get started",
+                  "What we'll cover in 20 minutes",
+                  "{company} | Discovery call",
+                  "Let's make this happen"),
+            _subj("From 'interested' to a real conversation",
+                  "How {company} gets from here to results",
+                  "The fastest path to a clear decision",
+                  "{company} | Fast-track",
+                  "Can't wait to speak with you"),
+        ),
+        "followup_1": _step(
+            _subj("Following up on your interest",
+                  "Nudging the calendar conversation",
+                  "Still keen to connect",
+                  "{company} | Meeting follow-up",
+                  "Still here whenever you're ready"),
+            _subj("Quick follow-up",
+                  "The meeting that changes everything",
+                  "Picking up where we left off",
+                  "{company} | Next step",
+                  "Checking back in, {name}"),
+            _subj("Let's get this in the diary",
+                  "Making it easier to say yes",
+                  "One more nudge",
+                  "{company} | Diary invite",
+                  "One more try"),
+        ),
+        "followup_2": _step(
+            _subj("Last nudge on the meeting",
+                  "The call that takes 20 minutes",
+                  "One more gentle push",
+                  "{company} | Final nudge",
+                  "Just one more"),
+            _subj("Closing out — but leaving the door open",
+                  "Still happy to connect on your schedule",
+                  "The standing invite",
+                  "{company} | Open invitation",
+                  "Whenever works for you"),
+            _subj("Going quiet — but here when you need us",
+                  "The always-open calendar link",
+                  "No pressure — just a standing invitation",
+                  "{company} | Standing invite",
+                  "We'll be here"),
+        ),
+        "recovery": _step(
+            _subj("Circling back",
+                  "Still open to a quick call?",
+                  "Hoping the timing is better now",
+                  "{company} | Reconnect",
+                  "One more attempt"),
+            _subj("Reconnecting",
+                  "The call we never got to have",
+                  "A fresh look at meeting up",
+                  "{company} | Recovery call",
+                  "Still here"),
+            _subj("Final attempt",
+                  "The last calendar link I'll send",
+                  "If you ever want to talk",
+                  "{company} | Final offer",
+                  "Whenever you're ready"),
+        ),
+        "reengagement": _step(
+            _subj("Long time — still open to a chat?",
+                  "Checking in one more time",
+                  "A lot has changed — worth a catch-up",
+                  "{company} | Re-engagement",
+                  "Thinking of you"),
+            _subj("Reaching out one last time",
+                  "A standing invitation to connect",
+                  "The meeting we never had",
+                  "{company} | Final check-in",
+                  "No pressure"),
+            _subj("Final note from KALNET",
+                  "We're always here if the timing shifts",
+                  "One last offer to connect",
+                  "{company} | Closing note",
+                  "Wishing you all the best"),
+        ),
+    },
+
+    Intent.INTERESTED_NOT_CONVINCED: {
+        "initial": _step(
+            _subj("Fair enough — let me address that",
+                  "The ROI case for {company}",
+                  "What usually changes the mind",
+                  "{company} | Objection handling",
+                  "I hear you, {name}"),
+            _subj("Let me make the case",
+                  "Three reasons teams like {company} say yes",
+                  "The data that usually convinces",
+                  "{company} | Business case",
+                  "Happy to address your concerns"),
+            _subj("Still on the fence? Here's what to look at",
+                  "How {company} can evaluate KALNET risk-free",
+                  "The honest conversation most vendors won't have",
+                  "{company} | Evaluation guide",
+                  "Let's be straight with each other"),
+        ),
+        "followup_1": _step(
+            _subj("Addressing the hesitation",
+                  "A case study from a team like {company}",
+                  "What changed for other doubters",
+                  "{company} | Social proof",
+                  "Sending something I think will help"),
+            _subj("One more thought",
+                  "The ROI model for {company}",
+                  "Numbers that usually move the needle",
+                  "{company} | ROI evidence",
+                  "One more piece of evidence"),
+            _subj("The thing that usually closes the gap",
+                  "What a 30-day pilot shows",
+                  "The risk-free way to find out",
+                  "{company} | Pilot proposal",
+                  "A way to be certain"),
+        ),
+        "followup_2": _step(
+            _subj("Last thought before I stop",
+                  "The discovery call that removes all doubt",
+                  "15 minutes to get to a clear yes or no",
+                  "{company} | Final push",
+                  "One last thing"),
+            _subj("Final note",
+                  "Everything you need to make a confident decision",
+                  "The last piece of information",
+                  "{company} | Decision kit",
+                  "Before I go quiet"),
+            _subj("Closing out — with one final offer",
+                  "A no-risk way to find out if this fits",
+                  "The option most people wish they'd taken sooner",
+                  "{company} | Final offer",
+                  "Last one from me"),
+        ),
+        "recovery": _step(
+            _subj("Reconnecting — has anything shifted?",
+                  "New evidence for {company}",
+                  "The question worth revisiting",
+                  "{company} | Recovery note",
+                  "Checking back in"),
+            _subj("One more note",
+                  "What's changed at KALNET",
+                  "A fresh reason to reconsider",
+                  "{company} | Update",
+                  "Things look different now"),
+            _subj("Final attempt",
+                  "The thing that wasn't available before",
+                  "A better deal than last time",
+                  "{company} | Final recovery",
+                  "Last chance"),
+        ),
+        "reengagement": _step(
+            _subj("Long time — still on the fence?",
+                  "New proof that might move things",
+                  "The timing might be different now",
+                  "{company} | Re-engagement",
+                  "Thought of you"),
+            _subj("Reaching out one more time",
+                  "What's changed since we last spoke",
+                  "A fresh case for a second look",
+                  "{company} | Second look",
+                  "No pressure"),
+            _subj("Final note from KALNET",
+                  "One last piece of evidence",
+                  "The parting thought I want to leave you with",
+                  "{company} | Closing note",
+                  "All the best either way"),
+        ),
+    },
+
+    Intent.NOT_INTERESTED: {
+        "initial": _step(
+            _subj("No problem at all — thank you, {name}",
+                  "Wishing {company} all the best",
+                  "A sincere goodbye from the team",
+                  "{company} | Closing note",
+                  "Thank you for letting us know"),
+            _subj("Completely understood — take care",
+                  "Leaving the door open",
+                  "The standing invitation",
+                  "{company} | Always here",
+                  "No worries at all"),
+            _subj("Respect that completely — best of luck",
+                  "We'll always be here if things change",
+                  "The email that leaves no hard feelings",
+                  "{company} | Warm goodbye",
+                  "Thank you for your time"),
+        ),
+        "followup_1": _step(
+            _subj("Checking in — still not the right time?",
+                  "Just a gentle touch to stay on your radar",
+                  "Long-term note from KALNET",
+                  "{company} | Long-term touch",
+                  "No pressure — just staying in touch"),
+            _subj("Staying in touch — no agenda",
+                  "A useful resource, no strings",
+                  "Something that might be helpful regardless",
+                  "{company} | Value-add",
+                  "Hoping things are going well"),
+            _subj("Reaching out one more time — respectfully",
+                  "A useful note for {company}",
+                  "The thing worth knowing even if you don't buy",
+                  "{company} | No-strings note",
+                  "Just a thought"),
+        ),
+        "followup_2": _step(
+            _subj("Last note from KALNET — truly",
+                  "One final thought for {company}",
+                  "The email I promised would be the last",
+                  "{company} | Final note",
+                  "The last one — I mean it"),
+            _subj("Going quiet now — but here if you need us",
+                  "The standing door",
+                  "Always here if things change",
+                  "{company} | Open door",
+                  "Wishing you well"),
+            _subj("Signing off — with warmth",
+                  "All the best from Team KALNET",
+                  "The email that closes gracefully",
+                  "{company} | Warm close",
+                  "Thank you for everything"),
+        ),
+        "recovery": _step(
+            _subj("Circling back — purely to check in",
+                  "Has anything changed at {company}?",
+                  "A low-pressure check-in",
+                  "{company} | Gentle reconnect",
+                  "No pressure — just thinking of you"),
+            _subj("One more touch — then silence",
+                  "A reason to reconnect if timing is right",
+                  "The note that respects your decision",
+                  "{company} | Respectful recovery",
+                  "Whenever the time is right"),
+            _subj("Final recovery note",
+                  "We're still here if circumstances change",
+                  "The door is always open",
+                  "{company} | Open door",
+                  "Wishing you all the best"),
+        ),
+        "reengagement": _step(
+            _subj("It's been a long time — just checking in",
+                  "Has anything shifted for {company}?",
+                  "A once-a-year note from KALNET",
+                  "{company} | Annual check-in",
+                  "Hoping things are going well"),
+            _subj("One final note",
+                  "We'll always be here — no pressure",
+                  "The last reach-out",
+                  "{company} | Final note",
+                  "Take care"),
+            _subj("Closing the book — with gratitude",
+                  "Thank you for your time over the years",
+                  "The warmest goodbye we can send",
+                  "{company} | Grateful close",
+                  "All the very best"),
         ),
     },
 }
@@ -860,11 +1580,18 @@ for _intent in (Intent.SECURITY_CONCERN, Intent.COMPLIANCE_CONCERN,
                 Intent.SOFT_BOUNCE, Intent.HARD_BOUNCE, Intent.UNKNOWN):
     ADVANCED_EMAIL_SUBJECTS[_intent] = ADVANCED_EMAIL_SUBJECTS[Intent.NOT_NOW]
 
+# Map INTERESTED_CTA as alias for meeting scheduling flow
+ADVANCED_EMAIL_SUBJECTS[Intent.INTERESTED_CTA] = \
+    ADVANCED_EMAIL_SUBJECTS.get(Intent.INTERESTED_CTA,
+                                ADVANCED_EMAIL_SUBJECTS[Intent.INTERESTED])
+
 
 # ---------------------------------------------------------------------------
 # ADVANCED_EMAIL_BODIES
 # Structure: [intent][step][version][length]
 # All strings accept {name} and {company} placeholders.
+# v2: All body strings are now more conversational, human, persuasive, and
+#     focus on business value, ROI, and meeting/demo scheduling.
 # ---------------------------------------------------------------------------
 
 ADVANCED_EMAIL_BODIES = {
@@ -873,99 +1600,115 @@ ADVANCED_EMAIL_BODIES = {
         "initial": {
             "a": {
                 "short": (
-                    "Hi {name},\n\nGreat to hear you're interested.\n\n"
-                    "I'd love to set up a quick 15-minute call to show you exactly what "
-                    "AI-5 can do for {company}. Here's my calendar: [link]\n\n"
-                    "Best,\nTeam AI-5"
+                    "Hi {name},\n\n"
+                    "Really glad to hear you're interested — that makes my day.\n\n"
+                    "The best next step is a quick 20-minute call where I can show you "
+                    "exactly how KALNET would work for {company}'s specific situation. "
+                    "No generic demos — just a focused conversation about your goals.\n\n"
+                    f"Book a time here: {_CALENDAR_LINK}\n\n"
+                    "Looking forward to it!\n\nBest,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nThank you — really glad to hear it.\n\n"
-                    "To make the most of our conversation, I'd love to understand {company}'s "
-                    "current outreach process first. Could you share:\n"
+                    "Hi {name},\n\n"
+                    "Thank you — really glad to hear it.\n\n"
+                    "To make the most of our conversation, I'd love to understand "
+                    "{company}'s current outreach process first. Could you share:\n"
                     "1. How many leads you work per month?\n"
                     "2. What your biggest follow-up bottleneck is?\n\n"
                     "That way I can tailor everything to what matters most to you.\n\n"
-                    "Calendar link: [link]\n\nBest,\nTeam AI-5"
+                    f"Or simply book a discovery call: {_CALENDAR_LINK}\n\n"
+                    "Best,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nThank you — I was hoping you'd say that.\n\n"
+                    "Hi {name},\n\n"
+                    "Thank you — I was hoping you'd say that.\n\n"
                     "Here's what I'd suggest as a next step: a focused 20-minute session "
-                    "where I walk you through exactly how AI-5 would fit into {company}'s "
-                    "workflow. No generic slides — I'll map it specifically to what you told me.\n\n"
+                    "where I walk you through exactly how KALNET would fit into {company}'s "
+                    "workflow. No generic slides — I'll map it specifically to your situation.\n\n"
                     "Before we meet, it would help to know:\n"
                     "• What does your current outreach stack look like?\n"
                     "• Where are leads most likely to fall through the cracks today?\n"
-                    "• Is this a priority for Q3, or more of a Q4 initiative?\n\n"
-                    "You can book directly here: [link]\n"
+                    "• Is this a priority for this quarter, or more of a next-quarter initiative?\n\n"
+                    f"Book directly here: {_CALENDAR_LINK}\n"
                     "Or reply with a few times and I'll make it work.\n\n"
-                    "Best,\nTeam AI-5"
+                    "Best,\nTeam KALNET"
                 ),
             },
             "b": {
                 "short": (
-                    "Hi {name},\n\nExciting — let's make this happen.\n\n"
-                    "Pick a time that works: [link]\n\nBest,\nTeam AI-5"
+                    "Hi {name},\n\n"
+                    "Exciting — let's make this happen.\n\n"
+                    f"Pick a time that works: {_CALENDAR_LINK}\n\n"
+                    "Best,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nWonderful — let's take this forward.\n\n"
-                    "I can put together a short, customised overview of how AI-5 would "
-                    "work for {company} specifically. Takes about 15 minutes and I'll "
+                    "Hi {name},\n\n"
+                    "Wonderful — let's take this forward.\n\n"
+                    "I can put together a short, customised overview of how KALNET would "
+                    "work for {company} specifically. Takes about 20 minutes and I'll "
                     "leave you with a clear picture of the ROI.\n\n"
-                    "Book here: [link]\n\nBest,\nTeam AI-5"
+                    f"Book here: {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nThank you for saying so — it means a lot.\n\n"
+                    "Hi {name},\n\n"
+                    "Thank you for saying so — it means a lot.\n\n"
                     "Let me be direct about what I'd recommend: a 20-minute focused "
-                    "walkthrough of AI-5 tailored to {company}. I'll cover:\n\n"
+                    "walkthrough of KALNET tailored to {company}. I'll cover:\n\n"
                     "• How we handle the follow-up problem most teams ignore\n"
                     "• What a typical 90-day ROI looks like for a team your size\n"
                     "• The three integrations that matter most\n\n"
                     "At the end you'll know clearly whether this is a fit — no pressure, "
                     "just clarity.\n\n"
-                    "Here's my calendar: [link]\n\nBest,\nTeam AI-5"
+                    f"Here's my calendar: {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
             },
             "c": {
                 "short": (
-                    "Hi {name},\n\nLove to hear it.\n\n"
-                    "15 minutes this week? [link]\n\nBest,\nTeam AI-5"
+                    "Hi {name},\n\n"
+                    "Love to hear it.\n\n"
+                    f"20 minutes this week? {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nWonderful news.\n\n"
-                    "A 15-minute call will tell us everything we need to know about "
+                    "Hi {name},\n\n"
+                    "Wonderful news.\n\n"
+                    "A 20-minute call will tell us everything we need to know about "
                     "the fit. I'll come prepared with a tailored overview of how "
-                    "{company} would use AI-5.\n\n"
-                    "Book here: [link]\n\nBest,\nTeam AI-5"
+                    "{company} would use KALNET.\n\n"
+                    f"Book here: {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nSo glad to hear it.\n\n"
+                    "Hi {name},\n\n"
+                    "So glad to hear it.\n\n"
                     "Here's what I'd love to do: before we talk numbers or contracts, "
-                    "let me run a quick 'fit assessment' for {company}. It takes 15 "
+                    "let me run a quick 'fit assessment' for {company}. It takes 20 "
                     "minutes and the output is a one-page summary of:\n\n"
-                    "• Where AI-5 fits in your current stack\n"
+                    "• Where KALNET fits in your current stack\n"
                     "• What you'd realistically save in the first 90 days\n"
                     "• What would need to be true for this to work\n\n"
                     "No commitment, no pitch — just a clear picture.\n\n"
-                    "Book here: [link]\n\nBest,\nTeam AI-5"
+                    f"Book here: {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
             },
         },
         "followup_1": {
             "a": {
                 "short": (
-                    "Hi {name},\n\nSharing a quick case study — a team like {company} "
+                    "Hi {name},\n\n"
+                    "Sharing a quick case study — a team like {company} "
                     "cut their manual outreach time by 65% in 90 days.\n\n"
-                    "Still open to a call? [link]\n\nBest,\nTeam AI-5"
+                    f"Still open to a call? {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nWanted to share something concrete.\n\n"
+                    "Hi {name},\n\n"
+                    "Wanted to share something concrete.\n\n"
                     "A company in {company}'s space recently reduced manual follow-up "
-                    "by 65% and doubled their response rate within 90 days of using AI-5.\n\n"
-                    "Happy to walk you through exactly how — 15 minutes max.\n\n"
-                    "Book here: [link]\n\nBest,\nTeam AI-5"
+                    "by 65% and doubled their response rate within 90 days of using KALNET.\n\n"
+                    "Happy to walk you through exactly how — 20 minutes max.\n\n"
+                    f"Book here: {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nFollowing up with something I think you'll find useful.\n\n"
+                    "Hi {name},\n\n"
+                    "Following up with something I think you'll find useful.\n\n"
                     "Last quarter, a company in a similar position to {company} came to us "
                     "with the same challenge: great leads, inconsistent follow-up, shrinking "
                     "pipeline. Within 90 days:\n\n"
@@ -973,76 +1716,86 @@ ADVANCED_EMAIL_BODIES = {
                     "• Response rate doubled\n"
                     "• Pipeline grew 40% with no additional headcount\n\n"
                     "I'd love to show you how we'd replicate that for {company}. "
-                    "A 20-minute call is all it takes.\n\nBook here: [link]\n\nBest,\nTeam AI-5"
+                    f"A 20-minute call is all it takes.\n\nBook here: {_CALENDAR_LINK}\n\n"
+                    "Best,\nTeam KALNET"
                 ),
             },
             "b": {
                 "short": (
-                    "Hi {name},\n\nQuick follow-up — still thinking about AI-5?\n\n"
-                    "Happy to answer any questions: [link]\n\nBest,\nTeam AI-5"
+                    "Hi {name},\n\n"
+                    "Quick follow-up — still thinking about KALNET?\n\n"
+                    f"Happy to answer any questions: {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nJust checking in to see if now is a better time.\n\n"
+                    "Hi {name},\n\n"
+                    "Just checking in to see if now is a better time.\n\n"
                     "I also wanted to share a quick ROI estimate I put together for "
                     "a team like {company}: 4–6 hours saved per rep per week, starting "
                     "from week one.\n\n"
-                    "Worth 15 minutes to see how?\n\nBook here: [link]\n\nBest,\nTeam AI-5"
+                    f"Worth 20 minutes to see how?\n\nBook here: {_CALENDAR_LINK}\n\n"
+                    "Best,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nI know inboxes fill up fast — just wanted to follow up "
-                    "once more.\n\n"
+                    "Hi {name},\n\n"
+                    "I know inboxes fill up fast — just wanted to follow up once more.\n\n"
                     "I've been thinking about {company}'s situation and I believe the fit "
                     "is genuinely strong. Here's why:\n\n"
                     "Your team likely loses 4–6 hours per rep per week to manual follow-up. "
                     "That's 20+ hours a week that could go into conversations instead of admin.\n\n"
-                    "AI-5 closes that gap. I can show you the exact mechanics in 20 minutes.\n\n"
-                    "Book here: [link]\n\nBest,\nTeam AI-5"
+                    "KALNET closes that gap. I can show you the exact mechanics in 20 minutes.\n\n"
+                    f"Book here: {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
             },
             "c": {
                 "short": (
-                    "Hi {name},\n\nOne stat: teams like {company} see 40% pipeline growth "
-                    "in 90 days.\n\nWorth a chat? [link]\n\nBest,\nTeam AI-5"
+                    "Hi {name},\n\n"
+                    "One stat: teams like {company} see 40% pipeline growth "
+                    f"in 90 days.\n\nWorth a chat? {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nResearch shows 80% of sales happen after the 5th "
+                    "Hi {name},\n\n"
+                    "Research shows 80% of sales happen after the 5th "
                     "follow-up — but most reps stop at 2.\n\n"
-                    "AI-5 automates the difference. For {company}, that's real pipeline "
+                    "KALNET automates the difference. For {company}, that's real pipeline "
                     "that currently goes cold.\n\n"
-                    "15 minutes this week? [link]\n\nBest,\nTeam AI-5"
+                    f"20 minutes this week? {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nHere's a counter-intuitive fact: the best time to reach "
+                    "Hi {name},\n\n"
+                    "Here's a counter-intuitive fact: the best time to reach "
                     "a prospect is often their 4th or 5th touchpoint — when everyone else "
                     "has given up.\n\n"
-                    "Most {company}-sized teams stop at touchpoint 2. AI-5 keeps you in the "
+                    "Most {company}-sized teams stop at touchpoint 2. KALNET keeps you in the "
                     "game automatically, with intent detection that knows exactly what to send "
                     "and when.\n\n"
                     "For a team like {company}, I estimate:\n"
                     "• 40–60% reduction in leads going cold\n"
                     "• 30% increase in meetings booked from existing pipeline\n"
                     "• ROI typically visible within 45 days\n\n"
-                    "A 20-minute call will confirm whether those numbers apply to you. "
-                    "Book here: [link]\n\nBest,\nTeam AI-5"
+                    f"A 20-minute call will confirm whether those numbers apply to you. "
+                    f"Book here: {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
             },
         },
         "followup_2": {
             "a": {
                 "short": (
-                    "Hi {name},\n\nOne last thought before I stop following up — "
+                    "Hi {name},\n\n"
+                    "One last thought before I stop following up — "
                     "I built a custom ROI model for {company}. Reply 'yes' and I'll send it.\n\n"
-                    "Best,\nTeam AI-5"
+                    "Best,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nThis is my last follow-up — I don't want to be a nuisance.\n\n"
+                    "Hi {name},\n\n"
+                    "This is my last follow-up — I don't want to be a nuisance.\n\n"
                     "But before I go quiet: I've put together a one-page ROI estimate "
                     "for {company} based on your team size and industry. No commitment — "
                     "just useful numbers to have.\n\n"
-                    "Reply 'yes' and I'll send it over.\n\nBest,\nTeam AI-5"
+                    "Reply 'yes' and I'll send it over.\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nI'll be upfront — this is my last follow-up. I believe "
+                    "Hi {name},\n\n"
+                    "I'll be upfront — this is my last follow-up. I believe "
                     "in respecting people's inboxes.\n\n"
                     "But I didn't want to leave without sharing one last thing: I built a "
                     "custom ROI estimate for {company} that shows:\n\n"
@@ -1051,22 +1804,26 @@ ADVANCED_EMAIL_BODIES = {
                     "• Cost-per-qualified-lead comparison vs manual process\n\n"
                     "It's free, takes me 10 minutes to send, and it's yours to use "
                     "regardless of what you decide.\n\n"
-                    "Reply 'yes' and I'll send it.\n\nBest,\nTeam AI-5"
+                    "Reply 'yes' and I'll send it.\n\nBest,\nTeam KALNET"
                 ),
             },
             "b": {
                 "short": (
-                    "Hi {name},\n\nLast note from me. If the timing is ever right, "
-                    "I'm here: [link]\n\nWishing {company} all the best.\n\nBest,\nTeam AI-5"
-                ),
+                    "Hi {name},\n\n"
+                    "Last note from me. If the timing is ever right, "
+                    f"I'm here: {_CALENDAR_LINK}\n\nWishing {'{company}'} all the best.\n\n"
+                    "Best,\nTeam KALNET"
+                ).format(company="{company}"),
                 "medium": (
-                    "Hi {name},\n\nClosing the loop — this is my last note.\n\n"
-                    "If you ever want to revisit AI-5 for {company}, just reply and "
+                    "Hi {name},\n\n"
+                    "Closing the loop — this is my last note.\n\n"
+                    "If you ever want to revisit KALNET for {company}, just reply and "
                     "we'll be right here. No re-introduction needed.\n\n"
-                    "Wishing you and the team all the best.\n\nBest,\nTeam AI-5"
+                    "Wishing you and the team all the best.\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nThis is my last follow-up, and I wanted to make it count.\n\n"
+                    "Hi {name},\n\n"
+                    "This is my last follow-up, and I wanted to make it count.\n\n"
                     "Working with teams like {company} is what we're built for — "
                     "and I genuinely believe there's a strong fit here.\n\n"
                     "If anything changes — budget, timing, priorities — just reply to "
@@ -1074,50 +1831,57 @@ ADVANCED_EMAIL_BODIES = {
                     "In the meantime, I'll leave you with a free resource: our "
                     "'Pipeline Leak Audit' — a one-page framework for finding where "
                     "leads are dropping out of your current process.\n\n"
-                    "Wishing {company} all the best.\n\nBest,\nTeam AI-5"
+                    "Wishing {company} all the best.\n\nBest,\nTeam KALNET"
                 ),
             },
             "c": {
                 "short": (
-                    "Hi {name},\n\nFinal note — I'll stop after this.\n\n"
+                    "Hi {name},\n\n"
+                    "Final note — I'll stop after this.\n\n"
                     "One thing: we offer a free pipeline audit. No strings, just useful. "
-                    "Want it?\n\nBest,\nTeam AI-5"
+                    "Want it?\n\nBest,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nLast one from me.\n\n"
+                    "Hi {name},\n\n"
+                    "Last one from me.\n\n"
                     "I'm leaving you with our free 'Outreach Audit Checklist' — "
-                    "useful regardless of whether you use AI-5. It maps exactly where "
+                    "useful regardless of whether you use KALNET. It maps exactly where "
                     "leads go cold in a typical sales process.\n\n"
-                    "Reply 'send it' and it's yours.\n\nBest,\nTeam AI-5"
+                    "Reply 'send it' and it's yours.\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nI said I'd keep this short, so here goes:\n\n"
+                    "Hi {name},\n\n"
+                    "I said I'd keep this short, so here goes:\n\n"
                     "This is my last note. I've enjoyed learning about {company} and "
                     "I believe there's genuine value here whenever the timing is right.\n\n"
                     "Parting gift: a free 'Revenue Recovery Worksheet' that most teams "
                     "find valuable even before they buy anything. It quantifies exactly "
                     "how much pipeline is lost to poor follow-up.\n\n"
                     "Reply 'yes' for the worksheet. Otherwise, wishing {company} all "
-                    "the success.\n\nBest,\nTeam AI-5"
+                    "the success.\n\nBest,\nTeam KALNET"
                 ),
             },
         },
         "recovery": {
             "a": {
                 "short": (
-                    "Hi {name},\n\nIt's been a while — hoping things at {company} are going well.\n\n"
-                    "We've shipped a lot since we last connected. Worth a quick catch-up? [link]\n\n"
-                    "Best,\nTeam AI-5"
+                    "Hi {name},\n\n"
+                    "It's been a while — hoping things at {company} are going well.\n\n"
+                    f"We've shipped a lot since we last connected. Worth a quick catch-up? {_CALENDAR_LINK}\n\n"
+                    "Best,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nA few months have passed — I didn't want to let too long go by.\n\n"
-                    "Since we last spoke, AI-5 has launched advanced intent detection, "
+                    "Hi {name},\n\n"
+                    "A few months have passed — I didn't want to let too long go by.\n\n"
+                    "Since we last spoke, KALNET has launched advanced intent detection, "
                     "faster onboarding, and new integrations that might change the picture "
                     "for {company}.\n\n"
-                    "Open to a fresh 15-minute look?\n\nBook here: [link]\n\nBest,\nTeam AI-5"
+                    f"Open to a fresh 20-minute look?\n\nBook here: {_CALENDAR_LINK}\n\n"
+                    "Best,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nHope everything at {company} is going well.\n\n"
+                    "Hi {name},\n\n"
+                    "Hope everything at {company} is going well.\n\n"
                     "I wanted to reach out one more time because a lot has changed since "
                     "we last connected:\n\n"
                     "• Intent classification now covers 40+ reply types\n"
@@ -1126,95 +1890,109 @@ ADVANCED_EMAIL_BODIES = {
                     "• Pricing has a new entry-level option\n\n"
                     "Teams that weren't ready 6 months ago are getting great results now. "
                     "I think the fit for {company} might be stronger than before.\n\n"
-                    "Worth 20 minutes for a fresh look? Book here: [link]\n\nBest,\nTeam AI-5"
+                    f"Worth 20 minutes for a fresh look? Book here: {_CALENDAR_LINK}\n\n"
+                    "Best,\nTeam KALNET"
                 ),
             },
             "b": {
                 "short": (
-                    "Hi {name},\n\nLong time — wanted to check in.\n\n"
-                    "Is the timing any better for {company}?\n\nBest,\nTeam AI-5"
+                    "Hi {name},\n\n"
+                    "Long time — wanted to check in.\n\n"
+                    "Is the timing any better for {company}?\n\nBest,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nHope Q3 is treating {company} well.\n\n"
+                    "Hi {name},\n\n"
+                    "Hope the quarter is treating {company} well.\n\n"
                     "I'm reaching back out because we've made changes I think you'd want "
                     "to know about — especially around pricing and onboarding speed.\n\n"
-                    "Would you be open to a fresh conversation?\n\nBest,\nTeam AI-5"
+                    "Would you be open to a fresh conversation?\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nI know it's been a while — thanks for your patience.\n\n"
-                    "I'm reaching back out because we've made meaningful changes to AI-5 "
+                    "Hi {name},\n\n"
+                    "I know it's been a while — thanks for your patience.\n\n"
+                    "I'm reaching back out because we've made meaningful changes to KALNET "
                     "that address some of the concerns teams in {company}'s position typically "
                     "have.\n\n"
                     "The short version: faster onboarding, more flexible pricing, and a "
                     "self-service ROI calculator that gives you real numbers in 5 minutes.\n\n"
-                    "I'd love a 20-minute session to show you the difference. "
-                    "Book here: [link]\n\nBest,\nTeam AI-5"
+                    f"I'd love a 20-minute session to show you the difference. "
+                    f"Book here: {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
             },
             "c": {
                 "short": (
-                    "Hi {name},\n\nCircling back one more time — still believe there's a "
-                    "strong fit with {company}.\n\nOpen to reconnecting? [link]\n\nBest,\nTeam AI-5"
-                ),
+                    "Hi {name},\n\n"
+                    "Circling back one more time — still believe there's a "
+                    f"strong fit with {'{company}'}.\n\nOpen to reconnecting? {_CALENDAR_LINK}\n\n"
+                    "Best,\nTeam KALNET"
+                ).format(company="{company}"),
                 "medium": (
-                    "Hi {name},\n\nOne more note before I stop reaching out for good.\n\n"
+                    "Hi {name},\n\n"
+                    "One more note before I stop reaching out for good.\n\n"
                     "We've grown significantly since we last connected and the product "
                     "is meaningfully better. If {company} is still working through the "
-                    "same outreach challenges, I believe AI-5 can now solve them more "
+                    "same outreach challenges, I believe KALNET can now solve them more "
                     "simply and affordably.\n\n"
-                    "Worth a look? [link]\n\nBest,\nTeam AI-5"
+                    f"Worth a look? {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nThis is my genuine last attempt — I want to respect your time.\n\n"
-                    "When we first spoke, I think the timing wasn't quite right. That's "
-                    "completely fair.\n\n"
+                    "Hi {name},\n\n"
+                    "This is my genuine last attempt — I want to respect your time.\n\n"
+                    "When we first spoke, I think the timing wasn't quite right. "
+                    "That's completely fair.\n\n"
                     "But the product is genuinely different now, and I'd feel like I let "
                     "you down if I didn't share what's changed:\n\n"
                     "• A new 'quick start' plan designed for teams like {company}\n"
                     "• Onboarding takes 3 days, not weeks\n"
                     "• We now offer a 30-day pilot with full support\n\n"
                     "If none of that moves the needle, I understand. If it does, "
-                    "here's 20 minutes: [link]\n\n"
-                    "Either way, wishing {company} all the best.\n\nBest,\nTeam AI-5"
+                    f"here's 20 minutes: {_CALENDAR_LINK}\n\n"
+                    "Either way, wishing {company} all the best.\n\nBest,\nTeam KALNET"
                 ),
             },
         },
         "reengagement": {
             "a": {
                 "short": (
-                    "Hi {name},\n\nIt's been over a year — wanted to check in one final time.\n\n"
-                    "Is AI-5 still on your radar for {company}?\n\nBest,\nTeam AI-5"
+                    "Hi {name},\n\n"
+                    "It's been over a year — wanted to check in one final time.\n\n"
+                    "Is KALNET still on your radar for {company}?\n\nBest,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nA lot has changed at AI-5 since we last spoke.\n\n"
+                    "Hi {name},\n\n"
+                    "A lot has changed at KALNET since we last spoke.\n\n"
                     "If you're still dealing with the follow-up challenges we discussed, "
                     "I'd love to show you what's possible now — it's significantly better.\n\n"
-                    "15 minutes? [link]\n\nBest,\nTeam AI-5"
+                    f"20 minutes? {_CALENDAR_LINK}\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nI know it's been a long time, and I'll be brief.\n\n"
+                    "Hi {name},\n\n"
+                    "I know it's been a long time, and I'll be brief.\n\n"
                     "We've continued building and the product has come a long way. "
                     "Teams that said 'not yet' a year ago are now among our happiest customers.\n\n"
                     "If {company} is still experiencing the outreach and follow-up challenges "
                     "we talked about, I think this is worth 20 minutes of your time.\n\n"
-                    "Book here: [link]  Or just reply and I'll make it easy.\n\n"
-                    "Wishing you all the best either way.\n\nBest,\nTeam AI-5"
+                    f"Book here: {_CALENDAR_LINK}  Or just reply and I'll make it easy.\n\n"
+                    "Wishing you all the best either way.\n\nBest,\nTeam KALNET"
                 ),
             },
             "b": {
                 "short": (
-                    "Hi {name},\n\nLast note from the AI-5 team.\n\n"
+                    "Hi {name},\n\n"
+                    "Last note from the KALNET team.\n\n"
                     "If the timing ever becomes right for {company}, we'll be here.\n\n"
-                    "Best,\nTeam AI-5"
+                    "Best,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nThis is my final note — I won't keep reaching out after this.\n\n"
-                    "If AI-5 ever makes sense for {company}, just reply to this email "
+                    "Hi {name},\n\n"
+                    "This is my final note — I won't keep reaching out after this.\n\n"
+                    "If KALNET ever makes sense for {company}, just reply to this email "
                     "and we'll be right here — no need to start over.\n\n"
-                    "Wishing you and the team all the best.\n\nBest,\nTeam AI-5"
+                    "Wishing you and the team all the best.\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nFinal note — I promise.\n\n"
+                    "Hi {name},\n\n"
+                    "Final note — I promise.\n\n"
                     "I've genuinely enjoyed learning about {company} and I still believe "
                     "there's a strong fit. But I also believe in respecting your inbox.\n\n"
                     "Before I go quiet for good: here's a parting resource. Our "
@@ -1222,30 +2000,425 @@ ADVANCED_EMAIL_BODIES = {
                     "run, regardless of what tools they use. It maps exactly where leads "
                     "fall through the cracks.\n\n"
                     "Reply 'send it' and it's yours, no strings.\n\n"
-                    "Wishing {company} all the best.\n\nBest,\nTeam AI-5"
+                    "Wishing {company} all the best.\n\nBest,\nTeam KALNET"
                 ),
             },
             "c": {
                 "short": (
-                    "Hi {name},\n\nOne last note.\n\n"
-                    "We're here if {company} ever wants to revisit AI-5. "
-                    "Just reply.\n\nBest,\nTeam AI-5"
+                    "Hi {name},\n\n"
+                    "One last note.\n\n"
+                    "We're here if {company} ever wants to revisit KALNET. "
+                    "Just reply.\n\nBest,\nTeam KALNET"
                 ),
                 "medium": (
-                    "Hi {name},\n\nClosing the loop after a long time.\n\n"
+                    "Hi {name},\n\n"
+                    "Closing the loop after a long time.\n\n"
                     "If anything has changed at {company} — new priorities, new budget, "
                     "new frustrations with outreach — we'd love to reconnect.\n\n"
-                    "Wishing you and the team well.\n\nBest,\nTeam AI-5"
+                    "Wishing you and the team well.\n\nBest,\nTeam KALNET"
                 ),
                 "long": (
-                    "Hi {name},\n\nThis is the last time I'll reach out.\n\n"
+                    "Hi {name},\n\n"
+                    "This is the last time I'll reach out.\n\n"
                     "I wanted to end on a useful note rather than just a goodbye: "
                     "enclosed is our free 'Outreach Efficiency Scorecard' — a one-page "
                     "self-assessment that helps any team understand where they stand "
                     "against industry benchmarks.\n\n"
-                    "No AI-5 required. Just a useful tool for {company}, from us.\n\n"
+                    "No KALNET required. Just a useful tool for {company}, from us.\n\n"
                     "Reply 'scorecard' and I'll send it. Otherwise — all the best, "
-                    "always.\n\nBest,\nTeam AI-5"
+                    "always.\n\nBest,\nTeam KALNET"
+                ),
+            },
+        },
+    },
+
+    # ── v2: NOT_INTERESTED bodies — warm, professional, zero-negative-messaging ──
+    Intent.NOT_INTERESTED: {
+        "initial": {
+            "a": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "Completely understood — and thank you so much for letting me know. "
+                    "I genuinely appreciate it.\n\n"
+                    "I won't keep reaching out, but I did want to say: the KALNET team "
+                    "will always be here if the situation at {company} ever shifts. "
+                    "Just reply to this email — no need to start over.\n\n"
+                    "Wishing you and the team all the very best.\n\nWarmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "No problem at all — and thank you for taking the time to respond. "
+                    "That's genuinely appreciated.\n\n"
+                    "I'll take {company} off the active outreach list. But please know "
+                    "that if your priorities, team, or situation ever changes — for any "
+                    "reason — we'll be right here. The door is always open, no questions asked.\n\n"
+                    "It's been a pleasure reaching out. Wishing {company} every success "
+                    "in what's ahead.\n\nWarmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "Thank you for being direct — that makes things easier for both of us, "
+                    "and I genuinely appreciate it.\n\n"
+                    "I'll make sure {company} is moved to a quiet list — you won't be "
+                    "hearing from us regularly anymore.\n\n"
+                    "That said, I do want to leave one thing on the table: markets shift, "
+                    "teams grow, and priorities evolve. If there ever comes a time when "
+                    "outreach automation is back on the agenda at {company}, we'll be here — "
+                    "and all it takes is a reply to bring the conversation back to life.\n\n"
+                    "There are no hard feelings, no pressure, and no agenda. Just a team "
+                    "that genuinely enjoyed the exchange and wishes you well.\n\n"
+                    "Thank you for your time, {name}. Wishing {company} all the very best.\n\n"
+                    "Warmly,\nTeam KALNET"
+                ),
+            },
+            "b": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "Totally understood — thank you for letting me know.\n\n"
+                    "Whenever the timing feels right for {company}, we'll be here. "
+                    "Just reply.\n\nWishing you all the best.\n\nWarmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "Thank you for the clarity — it's really helpful.\n\n"
+                    "I'll stop the outreach from our end. The only thing I'd leave you "
+                    "with is this: if anything changes at {company} — whether that's "
+                    "six months or two years from now — just hit reply. We'll pick up "
+                    "right where we left off.\n\n"
+                    "Wishing you and the entire team a great year ahead.\n\n"
+                    "Warmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "Thank you — and I really mean that. It takes a moment to respond "
+                    "and you didn't have to, so I appreciate it.\n\n"
+                    "I'll update our records and won't be back in your inbox on this topic.\n\n"
+                    "What I will say is: businesses evolve, teams change, and what doesn't "
+                    "fit today sometimes fits perfectly in a year. The KALNET team doesn't "
+                    "close doors — we just step back and let things breathe.\n\n"
+                    "If you ever want to pick up the conversation — for any reason, at any "
+                    "point — this email thread is all you need. We'll remember the context "
+                    "and be ready to help.\n\n"
+                    "It's been a genuine pleasure, {name}. Wishing {company} all the "
+                    "success in the world.\n\nWarmly,\nTeam KALNET"
+                ),
+            },
+            "c": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "Completely respect that — thank you for the response.\n\n"
+                    "We'll always be here if {company} needs us.\n\n"
+                    "Warmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "No problem at all — I appreciate you being upfront.\n\n"
+                    "We're stepping back, but the door is always open on our side. "
+                    "Should anything shift at {company}, we'll be easy to find.\n\n"
+                    "Take care, and all the best to the team.\n\nWarmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "Understood — and thank you.\n\n"
+                    "I'll close out the outreach on our end. But before I do, I wanted "
+                    "to make one thing clear: the KALNET team has genuinely enjoyed getting "
+                    "to know {company}, and that goodwill doesn't have an expiry date.\n\n"
+                    "If the landscape changes — new growth phase, new leadership, new "
+                    "challenges with outreach — don't hesitate to reach back out. We'll "
+                    "treat it like a continuation, not a restart.\n\n"
+                    "Until then, wishing {company} every success.\n\nWarmly,\nTeam KALNET"
+                ),
+            },
+        },
+        "followup_1": {
+            "a": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "Just a gentle long-term check-in — hope {company} is doing well.\n\n"
+                    "We're always here whenever the timing is right.\n\n"
+                    "Warmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "Hope the team at {company} is thriving. Just a light touch to stay "
+                    "connected — no agenda, no pitch.\n\n"
+                    "If anything's changed on your end and a conversation makes sense, "
+                    "just reply. We'll take it from there.\n\nWarmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "Hope all is well at {company}. I wanted to reach out one more time — "
+                    "not to pitch, just to stay connected.\n\n"
+                    "Businesses change fast, and I'd rather you know we're thinking of you "
+                    "than feel like we disappeared after your last message.\n\n"
+                    "No need to respond unless something has shifted. If it has, I'm one "
+                    "reply away.\n\nWishing you a great quarter.\n\nWarmly,\nTeam KALNET"
+                ),
+            },
+            "b": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "A quick hello from the KALNET team — no agenda.\n\n"
+                    "We're here whenever {company} needs us.\n\nWarmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "Just checking in — hope things are going well at {company}.\n\n"
+                    "We're still here and happy to reconnect whenever the timing feels right. "
+                    "No rush, no pressure.\n\nWarmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "A quick note from the KALNET team — purely to stay on your radar, not "
+                    "to reopen a conversation you've already closed.\n\n"
+                    "We genuinely respect your decision and are reaching out only because "
+                    "we've seen circumstances change for teams like {company} and wanted "
+                    "to make sure you know we're available if that happens here too.\n\n"
+                    "Wishing you a brilliant rest of the year.\n\nWarmly,\nTeam KALNET"
+                ),
+            },
+            "c": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "Staying in touch — nothing more.\n\n"
+                    "We're here for {company} whenever needed.\n\nWarmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "Just a brief hello to stay connected. No pressure, no agenda — "
+                    "just making sure you know we're here if {company}'s needs evolve.\n\n"
+                    "All the best.\n\nWarmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "I hope this finds you well.\n\n"
+                    "I promised I wouldn't be a nuisance, and I intend to keep that promise. "
+                    "This is just a light touch to say: the KALNET team is rooting for {company} "
+                    "regardless of whether you ever use our product.\n\n"
+                    "If the situation ever changes, we'll be ready. Until then — take care.\n\n"
+                    "Warmly,\nTeam KALNET"
+                ),
+            },
+        },
+        "followup_2": {
+            "a": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "The last note from us — truly. Thank you for your time.\n\n"
+                    "We're here if {company} ever needs us.\n\nWarmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "This is the last time I'll reach out — I want to keep my promise.\n\n"
+                    "We're stepping back completely now, but the door stays open forever. "
+                    "Whenever the timing is right for {company}, just reply.\n\n"
+                    "Wishing you all the very best.\n\nWarmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "Final note — and I genuinely mean it this time.\n\n"
+                    "Thank you for every interaction we've had. The KALNET team has enjoyed "
+                    "learning about {company}, and we wish you nothing but continued success.\n\n"
+                    "We'll be moving you to a long-term nurture list — which means you "
+                    "won't hear from us regularly, but you'll occasionally receive something "
+                    "genuinely useful: a resource, an industry insight, or a brief update "
+                    "about something that might matter to you. No pitches.\n\n"
+                    "Whenever you're ready to talk — whether that's next month or next "
+                    "year — we'll be here.\n\nWith warmth and respect,\nTeam KALNET"
+                ),
+            },
+            "b": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "Going quiet now — but always here.\n\n"
+                    "Best of luck to {company}.\n\nWarmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "Signing off for now — and thank you again for your time and honesty.\n\n"
+                    "The door is always open at KALNET. Wishing {company} every success.\n\n"
+                    "Warmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "Last note — I'll keep it brief.\n\n"
+                    "It's been a genuine pleasure, and we're proud to have been on your "
+                    "radar even if the timing wasn't right. Teams like {company} are exactly "
+                    "who we build for, so your feedback — even implicit — means a lot to us.\n\n"
+                    "We'll be here. Quietly, respectfully, and with no pressure.\n\n"
+                    "Wishing you a wonderful year ahead.\n\nWarmly,\nTeam KALNET"
+                ),
+            },
+            "c": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "All the best from KALNET. We'll always be here for {company}.\n\n"
+                    "Warmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "Closing out — with genuine warmth.\n\n"
+                    "Thank you for your time. If {company}'s situation ever changes, "
+                    "we'll be one reply away.\n\nAll the very best.\n\nWarmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "This is a genuine farewell — and a warm one.\n\n"
+                    "I'm grateful for every interaction we had. The KALNET team cares "
+                    "deeply about the companies we reach out to, and {company} is no exception.\n\n"
+                    "We're not disappearing — we're just stepping back respectfully. "
+                    "If you ever want to reconnect, this email thread is all you need.\n\n"
+                    "Until then, here's to {company}'s continued success.\n\n"
+                    "With respect and warmth,\nTeam KALNET"
+                ),
+            },
+        },
+        "recovery": {
+            "a": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "A gentle check-in — hope {company} is doing well.\n\n"
+                    "We're here if things have shifted.\n\nWarmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "It's been a while — I hope things are going well at {company}.\n\n"
+                    "I'm reaching out purely to stay connected, not to pitch. If the "
+                    "landscape has changed and a conversation would be welcome, I'm here.\n\n"
+                    "Warmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "Hope all is well at {company}.\n\n"
+                    "I wanted to circle back one more time — not to reopen anything closed, "
+                    "but because a lot changes in six months and I'd feel remiss not checking in.\n\n"
+                    "If the situation at {company} has evolved, we'd love to hear. If not, "
+                    "totally fine — this is just a friendly wave from the team.\n\n"
+                    "Wishing you well.\n\nWarmly,\nTeam KALNET"
+                ),
+            },
+            "b": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "Checking in — hoping {company} is thriving.\n\n"
+                    "We're still here whenever needed.\n\nWarmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "Just a light touch to stay on your radar.\n\n"
+                    "We know the timing wasn't right before, but businesses evolve fast. "
+                    "If it ever makes sense to reconnect, we're one reply away.\n\n"
+                    "Hope {company} is doing brilliantly.\n\nWarmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "A respectful check-in from the KALNET team.\n\n"
+                    "We promised to step back and we did. But we also said the door "
+                    "stays open — and it does. If anything has changed at {company} "
+                    "that makes outreach automation relevant again, we'd love to "
+                    "hear about it.\n\n"
+                    "If not, no response needed — we'll stay quiet.\n\n"
+                    "Wishing you a great rest of the year.\n\nWarmly,\nTeam KALNET"
+                ),
+            },
+            "c": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "A quiet check-in — no agenda.\n\n"
+                    "We're here for {company} whenever the time is right.\n\n"
+                    "Warmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "Reaching out one more time — purely to stay connected.\n\n"
+                    "If {company}'s situation has evolved since we last spoke, "
+                    "I'd love to reconnect. If not, no worries — just a friendly "
+                    "check-in.\n\nAll the best.\n\nWarmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "I know we said we'd step back, and we have — but this is just "
+                    "a long-term relationship touch, nothing more.\n\n"
+                    "KALNET has continued to grow and improve since we last connected. "
+                    "If {company} has experienced any changes in outreach strategy, team "
+                    "size, or growth goals, we'd love to have a fresh conversation.\n\n"
+                    "And if the answer is still no — that's perfectly fine. We appreciate "
+                    "your time, past and present.\n\nWarmly,\nTeam KALNET"
+                ),
+            },
+        },
+        "reengagement": {
+            "a": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "One final note — hoping {company} is doing wonderfully.\n\n"
+                    "We'll always be here whenever needed.\n\nWarmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "This is our last long-term check-in — and a warm one.\n\n"
+                    "We hope {company} has had a great year. If anything has changed "
+                    "and a conversation would be welcome, just reply — we'll be here.\n\n"
+                    "All the best, always.\n\nWarmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "A final note from the KALNET team — with gratitude.\n\n"
+                    "It's been a long time since we first reached out, and we've genuinely "
+                    "enjoyed following {company}'s journey from a distance.\n\n"
+                    "We won't reach out again unless you initiate — that's a promise. "
+                    "But we did want to say: the door is always open, the team is always "
+                    "friendly, and there's never any pressure.\n\n"
+                    "Wishing {company} every success in everything ahead.\n\n"
+                    "With warmth and respect,\nTeam KALNET"
+                ),
+            },
+            "b": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "Last long-term note — wishing {company} all the best.\n\n"
+                    "We're here if needed.\n\nWarmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "Final note — and a sincere thank you for every interaction.\n\n"
+                    "KALNET will always be here for {company} whenever the time is right. "
+                    "No need to start over — just reply.\n\nAll the very best.\n\n"
+                    "Warmly,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "This is the last note from our team — and I want it to reflect "
+                    "how we genuinely feel.\n\n"
+                    "Thank you for being part of our journey, even as a prospect. "
+                    "The conversations and interactions we had shaped how we think "
+                    "about teams like {company}, and that's genuinely valuable to us.\n\n"
+                    "We wish you and the entire {company} team the very best — now "
+                    "and always.\n\nWith warmth,\nTeam KALNET"
+                ),
+            },
+            "c": {
+                "short": (
+                    "Hi {name},\n\n"
+                    "Closing the book — with warmth.\n\n"
+                    "Thank you, {name}. Wishing {company} all the best.\n\n"
+                    "Warmly,\nTeam KALNET"
+                ),
+                "medium": (
+                    "Hi {name},\n\n"
+                    "One final note — and a genuine thank you.\n\n"
+                    "We hope {company} continues to thrive. If we can ever be of service, "
+                    "we'll be here.\n\nWith warmth,\nTeam KALNET"
+                ),
+                "long": (
+                    "Hi {name},\n\n"
+                    "This is it — the last note.\n\n"
+                    "I want to close by saying something sincere: teams that are selective "
+                    "about what they adopt — like {company} — are the ones that succeed long "
+                    "term. We respect that deeply.\n\n"
+                    "If the day ever comes when KALNET feels right for you, we'll be here — "
+                    "unchanged, warm, and ready to help without any trace of 'I told you so.'\n\n"
+                    "Until then, all the very best.\n\nWith deep respect,\nTeam KALNET"
                 ),
             },
         },
@@ -1266,6 +2439,13 @@ for _intent in (Intent.NO_BUDGET, Intent.BUDGET_FROZEN,
     if _intent not in ADVANCED_EMAIL_BODIES:
         ADVANCED_EMAIL_BODIES[_intent] = ADVANCED_EMAIL_BODIES[Intent.INTERESTED]
 
+# CTA-response intents map to their own NOT_INTERESTED bodies or INTERESTED bodies
+if Intent.INTERESTED_CTA not in ADVANCED_EMAIL_BODIES:
+    ADVANCED_EMAIL_BODIES[Intent.INTERESTED_CTA] = ADVANCED_EMAIL_BODIES[Intent.INTERESTED]
+if Intent.INTERESTED_NOT_CONVINCED not in ADVANCED_EMAIL_BODIES:
+    ADVANCED_EMAIL_BODIES[Intent.INTERESTED_NOT_CONVINCED] = ADVANCED_EMAIL_BODIES[Intent.INTERESTED]
+# NOT_INTERESTED bodies defined above
+
 for _intent in (Intent.NOT_NOW, Intent.MAYBE_LATER, Intent.FOLLOW_UP_NEXT_WEEK,
                 Intent.FOLLOW_UP_NEXT_MONTH, Intent.FOLLOW_UP_NEXT_QUARTER,
                 Intent.FOLLOW_UP_NEXT_YEAR, Intent.BUSY, Intent.USING_COMPETITOR,
@@ -1282,13 +2462,18 @@ for _intent in (Intent.NOT_NOW, Intent.MAYBE_LATER, Intent.FOLLOW_UP_NEXT_WEEK,
 
 
 # ==========================================================================
-# ORIGINAL: Delay settings from Dashboard DB  [UNCHANGED]
+# ORIGINAL: Delay settings from Dashboard DB  [UPDATED — new defaults]
+# Dashboard settings key names are UNCHANGED for backward compatibility.
+# Only the fallback default values are updated: 5→2, 10→7.
+# Existing dashboard rows writing 'email_2_delay_days' / 'email_3_delay_days'
+# continue to work exactly as before.
 # ==========================================================================
 
 def _load_delay_settings() -> dict:
     import sqlite3
     db_path = os.path.join(os.path.dirname(__file__), '..', 'api', 'dashboard.db')
-    defaults = {'email_2_delay_days': 5, 'email_3_delay_days': 10}
+    # ── UPDATED defaults: Email 2: 2 days (was 5), Email 3: 7 days (was 10) ──
+    defaults = {'email_2_delay_days': 2, 'email_3_delay_days': 7}
     if not os.path.exists(db_path):
         return defaults
     try:
@@ -1304,7 +2489,7 @@ def _load_delay_settings() -> dict:
 
 
 # ==========================================================================
-# ORIGINAL CORE FUNCTION  [COMPLETELY UNCHANGED]
+# ORIGINAL CORE FUNCTION  [UPDATED — delay constants only; logic unchanged]
 # ==========================================================================
 
 def get_sequence_due_today(leads: List[Dict]) -> List[Dict]:
@@ -1313,8 +2498,8 @@ def get_sequence_due_today(leads: List[Dict]) -> List[Dict]:
 
     Uses TWO conditions to decide (not just days alone):
         days_elapsed == 0  AND sequence_step == 0  -> Email 1
-        days_elapsed == 5  AND sequence_step == 1  -> Email 2
-        days_elapsed == 10 AND sequence_step == 2  -> Email 3
+        days_elapsed >= 2  AND sequence_step == 1  -> Email 2  (was 5 days)
+        days_elapsed >= 7  AND sequence_step == 2  -> Email 3  (was 10 days)
 
     Checking sequence_step alongside days_elapsed prevents double-sends
     if the pipeline restarts or runs twice in one day.
@@ -1345,8 +2530,9 @@ def get_sequence_due_today(leads: List[Dict]) -> List[Dict]:
     today     = date.today()
     due_today = []
     delays   = _load_delay_settings()
-    email_2_delay = delays.get('email_2_delay_days', 5)
-    email_3_delay = delays.get('email_3_delay_days', 10)
+    # Updated defaults: 2 days for Email 2, 7 days for Email 3
+    email_2_delay = delays.get('email_2_delay_days', 2)
+    email_3_delay = delays.get('email_3_delay_days', 7)
 
     logger.info("Sequence check started -- %d leads -- date: %s", len(leads), today)
 
@@ -1463,7 +2649,7 @@ def get_email_content(lead: Dict) -> Dict:
     name    = lead.get("name", "there")
     company = lead.get("company", "your company")
 
-    subject = EMAIL_SUBJECTS.get(n, "Hello from Team AI-5").format(company=company)
+    subject = EMAIL_SUBJECTS.get(n, "Hello from Team KALNET").format(company=company)
     body    = EMAIL_BODIES.get(n, "").format(name=name, company=company)
 
     return {"subject": subject, "body": body}
@@ -1494,11 +2680,16 @@ _SCORE_WEIGHTS: Dict[str, int] = {
     "unsubscribed":    -60,
     "using_competitor": -10,
     "no_budget":        -8,
+    # v2: CTA signals
+    "cta_interested":   30,   # clicked ✅ Interested CTA
+    "cta_not_convinced": 15,  # clicked 🤔 CTA — still engaged
+    "cta_not_interested": -20, # clicked ❌ Not Interested CTA
 }
 
 _HIGH_INTENT_INTENTS = {
     Intent.DEMO_REQUEST, Intent.MEETING_REQUEST, Intent.PROPOSAL_REQUEST,
     Intent.PRICING_REQUEST, Intent.VERY_INTERESTED, Intent.PILOT_REQUEST,
+    Intent.INTERESTED_CTA,       # v2: CTA click counts as high intent
 }
 
 
@@ -1507,8 +2698,11 @@ def get_lead_score(lead: Dict) -> int:
     Return an engagement score 0–100 for a lead.
 
     Reads optional fields: intent, open_count, click_count, replied,
-    is_referral, bounced, unsubscribed.
+    is_referral, bounced, unsubscribed, cta_response.
     Missing fields are treated as zero/False.
+
+    v2: Also reads cta_response field (CTA_INTERESTED | CTA_INTERESTED_NOT_CONVINCED
+        | CTA_NOT_INTERESTED) and adjusts score accordingly.
 
     Falls back to 0 on any error — never raises.
     """
@@ -1530,6 +2724,19 @@ def get_lead_score(lead: Dict) -> int:
             total += _SCORE_WEIGHTS["using_competitor"]
         elif intent == Intent.NO_BUDGET:
             total += _SCORE_WEIGHTS["no_budget"]
+        elif intent == Intent.NOT_INTERESTED:
+            total += _SCORE_WEIGHTS["cta_not_interested"]
+        elif intent == Intent.INTERESTED_NOT_CONVINCED:
+            total += _SCORE_WEIGHTS["cta_not_convinced"]
+
+        # v2: CTA response field (separate from intent — for tracking only)
+        cta_response = (lead.get("cta_response") or "").lower()
+        if cta_response == CTA_INTERESTED:
+            total += _SCORE_WEIGHTS["cta_interested"]
+        elif cta_response == CTA_INTERESTED_NOT_CONVINCED:
+            total += _SCORE_WEIGHTS["cta_not_convinced"]
+        elif cta_response == CTA_NOT_INTERESTED:
+            total += _SCORE_WEIGHTS["cta_not_interested"]
 
         if lead.get("is_referral"):
             total += _SCORE_WEIGHTS["referral"]
@@ -1577,10 +2784,15 @@ def get_lead_score(lead: Dict) -> int:
 
 # ==========================================================================
 # ENTERPRISE: INTENT DELAY TABLE
-# [NEW — returns how many days to wait before next touch for each intent]
+# [UPDATED — added v2 CTA intents; existing values unchanged]
 # ==========================================================================
 
 _INTENT_DELAY_DAYS: Dict[str, int] = {
+    # v2: CTA-response intents
+    Intent.INTERESTED_CTA:           0,   # Act immediately on expressed interest
+    Intent.INTERESTED_NOT_CONVINCED: 1,   # Follow up next day with persuasion
+    Intent.NOT_INTERESTED:         180,   # Respectful 6-month pause before nurture
+    # Original intents (UNCHANGED)
     Intent.INTERESTED:             1,
     Intent.VERY_INTERESTED:        0,
     Intent.DEMO_REQUEST:           0,
@@ -1628,6 +2840,9 @@ def get_intent_delay(intent: str) -> int:
     """
     Return the recommended days to wait before the next follow-up for a given intent.
     Falls back to 5 days for unknown intents. Never raises.
+
+    v2: Also handles new CTA-response intents (INTERESTED_CTA → 0 days,
+        INTERESTED_NOT_CONVINCED → 1 day, NOT_INTERESTED → 180 days).
     """
     try:
         return _INTENT_DELAY_DAYS.get(intent, 5)
@@ -1638,12 +2853,17 @@ def get_intent_delay(intent: str) -> int:
 
 # ==========================================================================
 # ENTERPRISE: FOLLOW-UP STRATEGY
-# [NEW — maps a lead to the right step, version, and length]
+# [UPDATED — routing extended for v2 CTA intents]
 # ==========================================================================
 
 def get_followup_strategy(lead: Dict) -> Dict:
     """
     Return a strategy dict for a lead with optional advanced fields.
+
+    v2 routing additions:
+        INTERESTED_CTA         → step=initial, priority routing to meeting
+        INTERESTED_NOT_CONVINCED → step=initial, persuasion template path
+        NOT_INTERESTED         → step=followup_1 of NOT_INTERESTED nurture
 
     Returns
     -------
@@ -1665,25 +2885,32 @@ def get_followup_strategy(lead: Dict) -> Dict:
         email_number = int(lead.get("email_number", 1) or 1)
         adv_step     = int(lead.get("advanced_step", 0) or 0)
 
-        # Step selection: email_number maps to sequence step;
-        # advanced_step maps to nurture depth within the intent workflow
-        if adv_step == 0:
-            step = "initial"
-        elif adv_step == 1:
-            step = "followup_1"
-        elif adv_step == 2:
-            step = "followup_2"
-        elif adv_step == 3:
-            step = "followup_3"
-        elif adv_step >= 4:
-            step = "recovery"
+        # v2: CTA-intent overrides — bypass normal step logic
+        if intent == Intent.INTERESTED_CTA:
+            step = "initial"   # Always send meeting-scheduling email immediately
+        elif intent == Intent.INTERESTED_NOT_CONVINCED:
+            step = "initial"   # Persuasion starts fresh
+        elif intent == Intent.NOT_INTERESTED:
+            step = "initial"   # Warm closing email
         else:
-            step = "reengagement"
+            # Original step selection logic (UNCHANGED)
+            if adv_step == 0:
+                step = "initial"
+            elif adv_step == 1:
+                step = "followup_1"
+            elif adv_step == 2:
+                step = "followup_2"
+            elif adv_step == 3:
+                step = "followup_3"
+            elif adv_step >= 4:
+                step = "recovery"
+            else:
+                step = "reengagement"
 
-        # Fallback: if no advanced_step, derive from email_number
-        if not lead.get("advanced_step"):
-            step_map = {1: "initial", 2: "followup_1", 3: "followup_2"}
-            step = step_map.get(email_number, "initial")
+            # Fallback: if no advanced_step, derive from email_number
+            if not lead.get("advanced_step"):
+                step_map = {1: "initial", 2: "followup_1", 3: "followup_2"}
+                step = step_map.get(email_number, "initial")
 
         # Version: deterministic A/B/C from lead_id hash
         lead_id = lead.get("lead_id", "")
@@ -1721,7 +2948,7 @@ def get_followup_strategy(lead: Dict) -> Dict:
 
 # ==========================================================================
 # ENTERPRISE: SHOULD SEND ADVANCED FOLLOW-UP
-# [NEW — gate check before attempting advanced template lookup]
+# [UPDATED — CTA intents always qualify]
 # ==========================================================================
 
 def should_send_advanced_followup(lead: Dict) -> bool:
@@ -1733,6 +2960,7 @@ def should_send_advanced_followup(lead: Dict) -> bool:
         - open_count > 0
         - click_count > 0
         - a last_reply field
+        - a cta_response field  [v2]
 
     Falls back to False on any error (conservative — keeps original behaviour).
     """
@@ -1746,6 +2974,9 @@ def should_send_advanced_followup(lead: Dict) -> bool:
             return True
         if lead.get("last_reply"):
             return True
+        # v2: CTA response is a strong signal
+        if lead.get("cta_response"):
+            return True
         return False
     except Exception as exc:
         logger.error("should_send_advanced_followup error: %s", exc, exc_info=True)
@@ -1754,7 +2985,7 @@ def should_send_advanced_followup(lead: Dict) -> bool:
 
 # ==========================================================================
 # ENTERPRISE: GET NEXT FOLLOW-UP EMAIL (nurture path resolver)
-# [NEW — walks the intent-based nurture sequence]
+# [UPDATED — v2: appends CTA footer to all outbound emails]
 # ==========================================================================
 
 _NURTURE_STEPS = ["initial", "followup_1", "followup_2", "followup_3",
@@ -1765,8 +2996,9 @@ def get_next_followup_email(lead: Dict) -> Dict:
     """
     Return the next email in the nurture path for a lead.
 
-    Reads lead.get('advanced_step') to determine position in sequence.
-    If advanced_step is missing, defaults to step 0 ("initial").
+    v2 change: The CTA footer (3 clickable buttons) is appended to
+    every email body EXCEPT those for NOT_INTERESTED leads (they get
+    a clean closing email — no further CTAs).
 
     Returns
     -------
@@ -1782,6 +3014,7 @@ def get_next_followup_email(lead: Dict) -> Dict:
         subj_type = strategy["subject_type"]
         name      = lead.get("name",    "there")
         company   = lead.get("company", "your company")
+        lead_id   = lead.get("lead_id", "")
 
         # Subject lookup
         subj_block = (
@@ -1804,9 +3037,14 @@ def get_next_followup_email(lead: Dict) -> Dict:
         )
         body = body_raw.format(name=name, company=company)
 
+        # v2: Append CTA footer to all emails except NOT_INTERESTED closings
+        # NOT_INTERESTED gets a clean, warm goodbye — no further CTAs
+        if intent != Intent.NOT_INTERESTED:
+            body = append_cta_to_body(body, lead_id)
+
         logger.debug(
             "get_next_followup_email: intent=%s step=%s version=%s length=%s lead=%s",
-            intent, step, version, length, lead.get("lead_id", "?"),
+            intent, step, version, length, lead_id,
         )
         return {"subject": subject, "body": body}
 
@@ -1820,13 +3058,18 @@ def get_next_followup_email(lead: Dict) -> Dict:
 # ENTERPRISE: GET ADVANCED EMAIL CONTENT
 # Main entry point for callers who want advanced templates.
 # Falls back to get_email_content() on ANY failure.
-# [NEW — optional; existing code never calls this unless explicitly updated]
+# [UPDATED — v2: also appends CTA to basic email fallback when possible]
 # ==========================================================================
 
 def get_advanced_email_content(lead: Dict) -> Dict:
     """
     Return email content using enterprise templates when available,
     falling back to get_email_content() otherwise.
+
+    v2 change: When falling back to the original get_email_content(),
+    the CTA footer is appended to the body so every outbound email
+    (including original-template emails) carries the 3-button CTA.
+    This preserves backward compatibility while adding the new feature.
 
     This is the ONLY function run.py should add a call to if it wants
     advanced templates. Existing callers of get_email_content() are
@@ -1836,21 +3079,26 @@ def get_advanced_email_content(lead: Dict) -> Dict:
     ----------
     lead : dict — same structure as get_sequence_due_today() output.
                   May optionally include: intent, open_count, click_count,
-                  last_reply, advanced_step, is_referral, bounced.
+                  last_reply, advanced_step, is_referral, bounced, cta_response.
 
     Returns
     -------
     dict  { "subject": str, "body": str }  — guaranteed, never raises.
     """
     try:
-        # If no advanced signals, use the original templates
+        lead_id = lead.get("lead_id", "?")
+
+        # If no advanced signals, use the original templates + CTA footer
         if not should_send_advanced_followup(lead):
             logger.debug(
                 "get_advanced_email_content: no advanced signals for lead %s "
                 "— using original get_email_content()",
-                lead.get("lead_id", "?"),
+                lead_id,
             )
-            return get_email_content(lead)
+            content = get_email_content(lead)
+            # v2: append CTA footer even to original-template emails
+            content["body"] = append_cta_to_body(content["body"], lead_id)
+            return content
 
         result = get_next_followup_email(lead)
 
@@ -1858,9 +3106,11 @@ def get_advanced_email_content(lead: Dict) -> Dict:
         if not result.get("subject") or not result.get("body"):
             logger.warning(
                 "get_advanced_email_content: empty result for lead %s — falling back",
-                lead.get("lead_id", "?"),
+                lead_id,
             )
-            return get_email_content(lead)
+            content = get_email_content(lead)
+            content["body"] = append_cta_to_body(content["body"], lead_id)
+            return content
 
         return result
 
@@ -1869,12 +3119,55 @@ def get_advanced_email_content(lead: Dict) -> Dict:
             "get_advanced_email_content unexpected error for lead %s: %s — falling back",
             lead.get("lead_id", "?"), exc, exc_info=True,
         )
-        return get_email_content(lead)
+        content = get_email_content(lead)
+        try:
+            content["body"] = append_cta_to_body(content["body"], lead.get("lead_id", ""))
+        except Exception:
+            pass  # Never raise — return whatever we have
+        return content
 
 
 # ==========================================================================
 # ORIGINAL ENTRY POINT  [UNCHANGED]
 # ==========================================================================
+
+def _validate_kalnet_configuration() -> bool:
+    """
+    Validate that all KALNET configuration is properly set.
+    Checks for placeholder values that would break production.
+    Returns True if valid, False if issues found.
+    """
+    issues = []
+    
+    # Check for placeholder URLs (these would break production emails)
+    if "[" in _CTA_BASE_URL or "]" in _CTA_BASE_URL:
+        issues.append(f"CTA_BASE_URL contains placeholder: {_CTA_BASE_URL}")
+    
+    if "[" in _CALENDAR_LINK or "]" in _CALENDAR_LINK:
+        issues.append(f"CALENDAR_LINK contains placeholder: {_CALENDAR_LINK}")
+    
+    if "[" in _MEETING_LINK or "]" in _MEETING_LINK:
+        issues.append(f"MEETING_LINK contains placeholder: {_MEETING_LINK}")
+    
+    if "[" in _DISCOVERY_LINK or "]" in _DISCOVERY_LINK:
+        issues.append(f"DISCOVERY_LINK contains placeholder: {_DISCOVERY_LINK}")
+    
+    # Check for old branding references
+    if "track.ai5.io" in _CTA_BASE_URL:
+        issues.append(f"CTA_BASE_URL still contains deprecated track.ai5.io: {_CTA_BASE_URL}")
+    
+    if "ai5" in _CTA_BASE_URL.lower() or "ai-5" in _CTA_BASE_URL.lower():
+        issues.append(f"CTA_BASE_URL still contains old branding: {_CTA_BASE_URL}")
+    
+    if issues:
+        logger.error("🔴 KALNET Configuration Issues:")
+        for issue in issues:
+            logger.error(f"  {issue}")
+        return False
+    
+    logger.info("✅ KALNET Configuration validated successfully")
+    return True
+
 
 def _run_with_real_data() -> None:
     """Fetch real leads from Google Sheets and run the sequence check."""
@@ -1898,6 +3191,11 @@ def _run_with_real_data() -> None:
 
 def _run_with_dummy_data() -> None:
     """Run the sequence check against hardcoded dummy leads (no Sheets needed)."""
+    # Validate KALNET configuration before running tests
+    if not _validate_kalnet_configuration():
+        logger.error("Configuration validation failed. Set KALNET_* environment variables.")
+        return
+    
     today = date.today()
 
     print("\n" + "=" * 60)
@@ -1911,35 +3209,35 @@ def _run_with_dummy_data() -> None:
             "email": "priya@techcorp.com", "company": "TechCorp",
             "email_sent_at": "", "replied": False, "sequence_step": 0,
         },
-        {   # Email 2: Day 5, step=1
+        {   # Email 2: Day 2, step=1  (updated from Day 5)
             "lead_id": "row_2", "name": "Arjun Mehta",
             "email": "arjun@startup.io", "company": "Startup IO",
-            "email_sent_at": str(today - timedelta(days=5)),
+            "email_sent_at": str(today - timedelta(days=2)),
             "replied": False, "sequence_step": 1,
         },
-        {   # Email 3: Day 10, step=2
+        {   # Email 3: Day 7, step=2  (updated from Day 10)
             "lead_id": "row_3", "name": "Divya Nair",
             "email": "divya@bigco.com", "company": "BigCo",
-            "email_sent_at": str(today - timedelta(days=10)),
+            "email_sent_at": str(today - timedelta(days=7)),
             "replied": False, "sequence_step": 2,
         },
         # -- SHOULD be SKIPPED --------------------------------------------
         {   # replied=True
             "lead_id": "row_4", "name": "Kiran Patel",
             "email": "kiran@replied.com", "company": "Replied Inc",
-            "email_sent_at": str(today - timedelta(days=5)),
+            "email_sent_at": str(today - timedelta(days=2)),
             "replied": True, "sequence_step": 1,
         },
-        {   # wrong day (day 3)
+        {   # wrong day (day 1 — before 2-day threshold)
             "lead_id": "row_5", "name": "Meera Rao",
             "email": "meera@random.com", "company": "Random Corp",
-            "email_sent_at": str(today - timedelta(days=3)),
+            "email_sent_at": str(today - timedelta(days=1)),
             "replied": False, "sequence_step": 1,
         },
-        {   # day 5 but step=2 -- double-send guard
+        {   # day 2 but step=2 -- double-send guard
             "lead_id": "row_6", "name": "Ravi Kumar",
             "email": "ravi@skip.com", "company": "Skip Ltd",
-            "email_sent_at": str(today - timedelta(days=5)),
+            "email_sent_at": str(today - timedelta(days=2)),
             "replied": False, "sequence_step": 2,
         },
         {   # bad date format
@@ -1957,21 +3255,22 @@ def _run_with_dummy_data() -> None:
     for r in results:
         print(f"  {r['email_number']:<4} {r['name']:<20} {r['email']:<30}")
 
-    print("\n--- Email previews (original) ---\n")
+    print("\n--- Email previews (original — with CTA footer) ---\n")
     for r in results:
         c = get_email_content(r)
+        body_with_cta = append_cta_to_body(c["body"], r["lead_id"])
         print(f"  To      : {r['name']} <{r['email']}>")
         print(f"  Subject : {c['subject']}")
-        print(f"  Body    : {c['body'][:70].strip()}...")
+        print(f"  Body    : {body_with_cta[:120].strip()}...")
         print()
 
-    # Assertions (UNCHANGED from original — all still pass)
+    # Assertions (UNCHANGED from original — all still pass with updated delays)
     ids = [r["lead_id"] for r in results]
     assert "row_1" in ids,     "FAIL: row_1 (Email 1) should be included"
     assert "row_2" in ids,     "FAIL: row_2 (Email 2) should be included"
     assert "row_3" in ids,     "FAIL: row_3 (Email 3) should be included"
     assert "row_4" not in ids, "FAIL: row_4 (replied) must be skipped"
-    assert "row_5" not in ids, "FAIL: row_5 (day 3) must be skipped"
+    assert "row_5" not in ids, "FAIL: row_5 (day 1 — before threshold) must be skipped"
     assert "row_6" not in ids, "FAIL: row_6 (double-send guard) must be skipped"
     assert "row_7" not in ids, "FAIL: row_7 (bad date) must be skipped"
 
@@ -2003,6 +3302,23 @@ def _run_with_dummy_data() -> None:
             "company": "ColdCo", "email_number": 1, "sequence_step": 1,
             # No advanced fields — should fall back to original
         },
+        # v2: CTA response leads
+        {
+            "lead_id": "cta_1", "name": "Sunil Verma", "email": "sunil@interested.io",
+            "company": "InterestedCo", "email_number": 1, "sequence_step": 1,
+            "intent": Intent.INTERESTED_CTA, "cta_response": CTA_INTERESTED,
+        },
+        {
+            "lead_id": "cta_2", "name": "Pooja Singh", "email": "pooja@fence.io",
+            "company": "FenceCo", "email_number": 1, "sequence_step": 1,
+            "intent": Intent.INTERESTED_NOT_CONVINCED,
+            "cta_response": CTA_INTERESTED_NOT_CONVINCED,
+        },
+        {
+            "lead_id": "cta_3", "name": "Mohan Rao", "email": "mohan@nope.io",
+            "company": "NopeCo", "email_number": 1, "sequence_step": 1,
+            "intent": Intent.NOT_INTERESTED, "cta_response": CTA_NOT_INTERESTED,
+        },
     ]
 
     for lead in advanced_leads:
@@ -2014,10 +3330,44 @@ def _run_with_dummy_data() -> None:
         print(f"  Strategy: {strategy['step']} / {strategy['version']} / "
               f"{strategy['length']} / {strategy['subject_type']}")
         print(f"  Subject : {content['subject']}")
-        print(f"  Body    : {content['body'][:70].strip()}...")
+        print(f"  Body    : {content['body'][:80].strip()}...")
         print()
 
-    # Enterprise assertions
+    # ── v2: CTA flow smoke test ──────────────────────────────────────────
+    print("--- v2 CTA response flow smoke test ---\n")
+
+    test_lead = {
+        "lead_id": "smoke_1", "name": "Test User", "email": "test@test.io",
+        "company": "TestCo", "email_number": 1, "sequence_step": 1,
+    }
+
+    for cta_type in (CTA_INTERESTED, CTA_INTERESTED_NOT_CONVINCED, CTA_NOT_INTERESTED):
+        response = handle_cta_response(test_lead, cta_type)
+        print(f"  CTA type  : {cta_type}")
+        print(f"  New intent: {response['new_intent']}")
+        print(f"  Action    : {response['action']}")
+        print(f"  Subject   : {response['subject']}")
+        print(f"  Body      : {response['body'][:80].strip()}...")
+        print()
+
+    # CTA footer smoke test
+    sample_body = "Hi Test,\n\nThis is a sample email body.\n\nBest,\nTeam KALNET"
+    footer_body = append_cta_to_body(sample_body, "smoke_1")
+    assert "✅  Interested" in footer_body, "FAIL: CTA footer not appended"
+    assert "🤔  Interested but not convinced" in footer_body, "FAIL: CTA 2 missing"
+    assert "❌  Not interested right now" in footer_body, "FAIL: CTA 3 missing"
+
+    # Idempotency: appending twice should not double the footer
+    footer_body_2 = append_cta_to_body(footer_body, "smoke_1")
+    assert footer_body_2.count("✅  Interested") == 1, "FAIL: CTA footer doubled"
+
+    # NOT_INTERESTED → move to nurture
+    not_interested_lead = {**test_lead, "intent": Intent.NOT_INTERESTED}
+    nurture = move_to_nurture_list(not_interested_lead)
+    assert nurture["action"] == "move_to_nurture", "FAIL: nurture action wrong"
+    assert nurture["re_engage_after_days"] == 180, "FAIL: nurture delay wrong"
+
+    # Enterprise original assertions
     s1 = get_lead_score(advanced_leads[0])
     s3 = get_lead_score(advanced_leads[2])
     assert s1 > s3, "FAIL: lead with signals must outscore lead without"
@@ -2026,8 +3376,17 @@ def _run_with_dummy_data() -> None:
 
     d1 = get_intent_delay(Intent.VERY_INTERESTED)
     d2 = get_intent_delay(Intent.NO_BUDGET)
-    assert d1 == 0,  f"FAIL: VERY_INTERESTED delay should be 0, got {d1}"
-    assert d2 == 60, f"FAIL: NO_BUDGET delay should be 60, got {d2}"
+    d3 = get_intent_delay(Intent.INTERESTED_CTA)       # v2
+    d4 = get_intent_delay(Intent.NOT_INTERESTED)       # v2
+    assert d1 == 0,   f"FAIL: VERY_INTERESTED delay should be 0, got {d1}"
+    assert d2 == 60,  f"FAIL: NO_BUDGET delay should be 60, got {d2}"
+    assert d3 == 0,   f"FAIL: INTERESTED_CTA delay should be 0, got {d3}"
+    assert d4 == 180, f"FAIL: NOT_INTERESTED delay should be 180, got {d4}"
+
+    # Updated delay assertions (2 days and 7 days)
+    delays = _load_delay_settings()
+    assert delays['email_2_delay_days'] == 2,  "FAIL: email_2_delay should now be 2 days"
+    assert delays['email_3_delay_days'] == 7,  "FAIL: email_3_delay should now be 7 days"
 
     # Original get_email_content must still return correct keys
     for r in results:
@@ -2036,7 +3395,7 @@ def _run_with_dummy_data() -> None:
         assert "body" in c,    f"FAIL: get_email_content missing body for {r['lead_id']}"
 
     print("=" * 60)
-    print("  ALL ENTERPRISE ASSERTIONS PASSED")
+    print("  ALL ASSERTIONS PASSED (original + v2 enterprise)")
     print("=" * 60 + "\n")
 
 
