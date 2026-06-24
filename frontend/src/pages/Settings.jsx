@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../api/client'
 import { Save, Play, FileText, Loader2, CheckCircle, XCircle } from 'lucide-react'
 
@@ -10,6 +10,7 @@ export default function Settings() {
   const [logContent, setLogContent] = useState('')
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState(null)
+  const timerRef = useRef(null)
 
   useEffect(() => {
     api.get('/settings').then(res => {
@@ -25,16 +26,24 @@ export default function Settings() {
     alert('Settings saved!')
   }
 
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+  }, [])
+
   const handleRunPipeline = async () => {
     setRunning(true)
-    setRunResult(null)
+    setRunResult({ success: true, message: 'Pipeline is running...' })
     try {
-      const res = await api.post('/pipeline/run')
-      setRunResult({ success: true, message: res.data.message })
+      await api.post('/pipeline/run')
+      timerRef.current = setTimeout(() => {
+        setRunning(false)
+        setRunResult(null)
+      }, 30000)
     } catch (err) {
-      setRunResult({ success: false, message: err.response?.data?.error || 'Pipeline failed' })
-    } finally {
       setRunning(false)
+      setRunResult({ success: false, message: err.response?.data?.error || 'Pipeline failed' })
     }
   }
 
@@ -82,13 +91,21 @@ export default function Settings() {
           </button>
         </div>
 
+        {running && (
+          <div className="mt-4 w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+            <div className="bg-blue-500 h-full rounded-full animate-pulse" style={{ width: '60%' }} />
+          </div>
+        )}
+
         {runResult && (
           <div className={`mt-4 p-3 rounded-lg flex items-center gap-2 ${
-            runResult.success
+            runResult.success && !running
               ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+              : runResult.success && running
+              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
               : 'bg-red-500/20 text-red-400 border border-red-500/30'
           }`}>
-            {runResult.success ? <CheckCircle size={18} /> : <XCircle size={18} />}
+            {runResult.success ? <Loader2 size={18} className={running ? 'animate-spin' : ''} /> : <XCircle size={18} />}
             <span className="text-sm">{runResult.message}</span>
           </div>
         )}

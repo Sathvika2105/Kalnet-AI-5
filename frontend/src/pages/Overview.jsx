@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useMetrics } from '../hooks/usePolling'
 import KPICard from '../components/KPICard'
-import { Users, Send, MessageSquare, TrendingUp, UserX, RefreshCw, Play } from 'lucide-react'
+import { Users, Send, MessageSquare, TrendingUp, UserX, RefreshCw, Play, Loader2 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import api from '../api/client'
 
@@ -11,18 +11,27 @@ export default function Overview() {
   const { data: metrics, loading, lastUpdated, refresh } = useMetrics()
   const [running, setRunning] = useState(false)
   const [pipelineMsg, setPipelineMsg] = useState('')
+  const timerRef = useRef(null)
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+  }, [])
 
   const runPipeline = async () => {
     setRunning(true)
-    setPipelineMsg('')
+    setPipelineMsg('Pipeline is running...')
     try {
-      const res = await api.post('/pipeline/run')
-      setPipelineMsg('✅ ' + res.data.message)
-      setTimeout(refresh, 5000)
+      await api.post('/pipeline/run')
+      timerRef.current = setTimeout(() => {
+        setRunning(false)
+        setPipelineMsg('')
+        refresh()
+      }, 30000)
     } catch (e) {
-      setPipelineMsg('❌ Failed to trigger pipeline')
-    } finally {
       setRunning(false)
+      setPipelineMsg('❌ Failed to trigger pipeline')
     }
   }
 
@@ -64,7 +73,7 @@ export default function Overview() {
             disabled={running}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg transition-colors text-sm"
           >
-            <Play size={16} />
+            {running ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
             {running ? 'Running...' : 'Run Pipeline'}
           </button>
           <button
@@ -76,6 +85,12 @@ export default function Overview() {
           </button>
         </div>
       </div>
+
+      {running && (
+        <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+          <div className="bg-blue-500 h-full rounded-full animate-pulse" style={{ width: '60%' }} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         <KPICard label="Total Leads" value={metrics.total_leads} icon={Users} color="blue" />
