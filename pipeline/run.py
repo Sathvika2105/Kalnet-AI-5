@@ -168,7 +168,7 @@ def step_3_identify_due_emails(leads):
         if due_leads:
             log.info("Leads due for emails:")
             for lead in due_leads:
-                log.info(f"  - {lead['name']} ({lead['email']}) - Email #{lead['email_number']}")
+                log.info(f"  - {lead.get('name', 'Unknown')} ({lead['email']}) - Email #{lead['email_number']}")
             log.info("")
         
         return due_leads
