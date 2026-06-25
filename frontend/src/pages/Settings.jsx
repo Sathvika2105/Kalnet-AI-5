@@ -5,7 +5,7 @@ import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { playSuccessSound, playErrorSound } from '../utils/sounds'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { SkeletonPage } from '../components/Skeleton'
-import { Save, Play, FileText, Loader2, XCircle } from 'lucide-react'
+import { Save, Play, FileText, Loader2, XCircle, Radio } from 'lucide-react'
 
 export default function Settings() {
   const { addToast } = useToast()
@@ -17,7 +17,10 @@ export default function Settings() {
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState(null)
   const [showConfirm, setShowConfirm] = useState(false)
+  const [logStreaming, setLogStreaming] = useState(false)
   const pollRef = useRef(null)
+  const logPollRef = useRef(null)
+  const logContainerRef = useRef(null)
 
   useEffect(() => {
     api.get('/settings').then(res => {
@@ -42,16 +45,43 @@ export default function Settings() {
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
+      if (logPollRef.current) clearInterval(logPollRef.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight
+    }
+  }, [logContent])
 
   const loadLogs = async () => {
     const res = await api.get(`/logs/${logType}`)
     setLogContent(res.data.content)
+    if (running && !logPollRef.current) {
+      setLogStreaming(true)
+      logPollRef.current = setInterval(async () => {
+        try {
+          const res = await api.get(`/logs/${logType}`)
+          setLogContent(res.data.content)
+        } catch {
+          // ignore
+        }
+      }, 3000)
+    }
   }
 
+  useEffect(() => {
+    if (!running) {
+      if (logPollRef.current) {
+        clearInterval(logPollRef.current)
+        logPollRef.current = null
+      }
+      setLogStreaming(false)
+    }
+  }, [running])
+
   useKeyboardShortcuts([
-    { key: 'r', handler: () => !running && setShowConfirm(true), allowInput: false },
     { key: 'l', handler: () => loadLogs(), allowInput: false },
     { key: 'Enter', ctrl: true, handler: () => handleSave(), allowInput: true },
   ])
@@ -239,7 +269,15 @@ export default function Settings() {
         </div>
 
         <div className="bg-card-bg rounded-xl border border-card-border p-6 space-y-6">
-          <h3 className="text-lg font-semibold text-white">Pipeline Logs</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-white">Pipeline Logs</h3>
+            {logStreaming && (
+              <span className="flex items-center gap-1.5 text-xs text-green-400 font-medium">
+                <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
+                LIVE
+              </span>
+            )}
+          </div>
 
           <div className="flex gap-4">
             <select
@@ -255,11 +293,14 @@ export default function Settings() {
               className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm transition-colors"
             >
               <FileText size={16} />
-              Load
+              {logStreaming ? 'Streaming...' : 'Load'}
             </button>
           </div>
 
-          <pre className="bg-slate-900 rounded-lg p-4 text-sm text-slate-300 overflow-auto max-h-64 font-mono">
+          <pre
+            ref={logContainerRef}
+            className="bg-slate-900 rounded-lg p-4 text-sm text-slate-300 overflow-auto max-h-96 font-mono"
+          >
             {logContent || 'Click "Load" to view logs'}
           </pre>
         </div>

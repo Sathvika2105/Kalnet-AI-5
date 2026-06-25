@@ -1,9 +1,15 @@
+import { useState, useEffect, useRef } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
+import { useToast } from '../context/ToastContext'
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
+import { playSuccessSound, playErrorSound } from '../utils/sounds'
+import ConfirmDialog from './ConfirmDialog'
+import api from '../api/client'
 import {
   LayoutDashboard, Users, MessageSquare, BarChart3,
-  Settings, LogOut, Mail, Sun, Moon
+  Settings, LogOut, Mail, Sun, Moon, Play, Loader2
 } from 'lucide-react'
 
 const navItems = [
@@ -18,7 +24,60 @@ const navItems = [
 export default function Layout() {
   const { user, logout } = useAuth()
   const { theme, toggleTheme } = useTheme()
+  const { addToast } = useToast()
   const navigate = useNavigate()
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [running, setRunning] = useState(false)
+  const [pipelineMsg, setPipelineMsg] = useState('')
+  const pollRef = useRef(null)
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [])
+
+  const runPipeline = async () => {
+    setShowConfirm(false)
+    setRunning(true)
+    setPipelineMsg('Running...')
+    try {
+      await api.post('/pipeline/run')
+      pollRef.current = setInterval(async () => {
+        try {
+          const { data } = await api.get('/pipeline/status')
+          if (!data.running) {
+            clearInterval(pollRef.current)
+            pollRef.current = null
+            setRunning(false)
+            setPipelineMsg('')
+            if (data.success) {
+              playSuccessSound()
+              addToast('Pipeline completed successfully', 'success')
+            } else {
+              playErrorSound()
+              addToast(data.error || 'Pipeline failed', 'error', 8000)
+              setPipelineMsg('Failed')
+            }
+          } else {
+            setPipelineMsg('Running...')
+          }
+        } catch {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+          setRunning(false)
+          setPipelineMsg('')
+        }
+      }, 2000)
+    } catch {
+      setRunning(false)
+      setPipelineMsg('Failed to trigger')
+    }
+  }
+
+  useKeyboardShortcuts([
+    { key: 'r', handler: () => !running && setShowConfirm(true), allowInput: false },
+  ])
 
   const handleLogout = () => {
     logout()
@@ -27,6 +86,16 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen">
+      <ConfirmDialog
+        isOpen={showConfirm}
+        title="Run Pipeline"
+        message="Are you sure you want to trigger the email automation pipeline?"
+        confirmLabel="Run Pipeline"
+        variant="warning"
+        onConfirm={runPipeline}
+        onCancel={() => setShowConfirm(false)}
+      />
+
       <aside className="w-64 bg-sidebar-bg border-r border-slate-700 flex flex-col">
         <div className="p-6 border-b border-slate-700">
           <div className="flex items-center gap-3">
@@ -59,6 +128,17 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+
+        <div className="px-4 pb-2">
+          <button
+            onClick={() => setShowConfirm(true)}
+            disabled={running}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            {running ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+            {running ? pipelineMsg || 'Running...' : 'Run Pipeline'}
+          </button>
+        </div>
 
         <div className="p-4 border-t border-slate-700">
           <div className="flex items-center justify-between">

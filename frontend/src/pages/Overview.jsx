@@ -1,7 +1,6 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useMetrics } from '../hooks/usePolling'
 import { useToast } from '../context/ToastContext'
-import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { playSuccessSound, playErrorSound } from '../utils/sounds'
 import KPICard from '../components/KPICard'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -64,10 +63,6 @@ export default function Overview() {
       setPipelineMsg('Failed to trigger pipeline')
     }
   }
-
-  useKeyboardShortcuts([
-    { key: 'r', handler: () => !running && setShowConfirm(true), allowInput: false },
-  ])
 
   if (loading) return <SkeletonPage />
   if (!metrics) return <div className="text-red-400">Failed to load metrics</div>
