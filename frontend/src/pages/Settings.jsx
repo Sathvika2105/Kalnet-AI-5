@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import api from '../api/client'
+import { useToast } from '../context/ToastContext'
 import { Save, Play, FileText, Loader2, CheckCircle, XCircle } from 'lucide-react'
 
 export default function Settings() {
+  const { addToast } = useToast()
   const [settings, setSettings] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -10,7 +12,7 @@ export default function Settings() {
   const [logContent, setLogContent] = useState('')
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState(null)
-  const timerRef = useRef(null)
+  const pollRef = useRef(null)
 
   useEffect(() => {
     api.get('/settings').then(res => {
@@ -21,14 +23,18 @@ export default function Settings() {
 
   const handleSave = async () => {
     setSaving(true)
-    await api.put('/settings', settings)
+    try {
+      await api.put('/settings', settings)
+      addToast('Settings saved successfully', 'success')
+    } catch {
+      addToast('Failed to save settings', 'error')
+    }
     setSaving(false)
-    alert('Settings saved!')
   }
 
   useEffect(() => {
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
+      if (pollRef.current) clearInterval(pollRef.current)
     }
   }, [])
 
@@ -37,13 +43,34 @@ export default function Settings() {
     setRunResult({ success: true, message: 'Pipeline is running...' })
     try {
       await api.post('/pipeline/run')
-      timerRef.current = setTimeout(() => {
-        setRunning(false)
-        setRunResult(null)
-      }, 30000)
+      pollRef.current = setInterval(async () => {
+        try {
+          const { data } = await api.get('/pipeline/status')
+          if (!data.running) {
+            clearInterval(pollRef.current)
+            pollRef.current = null
+            setRunning(false)
+            if (data.success) {
+              setRunResult({ success: true, message: data.message })
+              addToast('Pipeline completed successfully', 'success')
+            } else {
+              const errMsg = data.error || 'Unknown error'
+              setRunResult({ success: false, message: `Pipeline failed: ${errMsg}` })
+              addToast(errMsg, 'error', 8000)
+            }
+          }
+        } catch {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+          setRunning(false)
+          setRunResult({ success: false, message: 'Failed to check pipeline status' })
+        }
+      }, 2000)
     } catch (err) {
       setRunning(false)
-      setRunResult({ success: false, message: err.response?.data?.error || 'Pipeline failed' })
+      const msg = err.response?.data?.error || 'Pipeline failed'
+      setRunResult({ success: false, message: msg })
+      addToast(msg, 'error', 8000)
     }
   }
 
@@ -185,7 +212,6 @@ export default function Settings() {
               className="px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm"
             >
               <option value="pipeline">Pipeline Log</option>
-              <option value="email">Email Log</option>
             </select>
 
             <button

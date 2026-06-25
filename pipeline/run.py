@@ -168,7 +168,7 @@ def step_3_identify_due_emails(leads):
         if due_leads:
             log.info("Leads due for emails:")
             for lead in due_leads:
-                log.info(f"  - {lead.get('name', 'Unknown')} ({lead['email']}) - Email #{lead['email_number']}")
+                log.info(f"  - {lead.get('name', 'Unknown')} ({lead.get('email', 'unknown')}) - Email #{lead.get('email_number', '?')}")
             log.info("")
         
         return due_leads
@@ -206,12 +206,12 @@ def step_4_send_emails(due_leads):
             subject = email_content['subject']
             body = email_content['body']
             
-            lead_id = lead['lead_id']
-            email_addr = lead['email']
-            email_number = lead['email_number']
+            lead_id = lead.get('lead_id', 'unknown')
+            email_addr = lead.get('email', 'unknown')
+            email_number = lead.get('email_number', 0)
             
             log.info(f"\n[{idx}/{len(leads_to_send)}] Sending Email #{email_number}")
-            log.info(f"  To: {lead['name']} <{email_addr}>")
+            log.info(f"  To: {lead.get('name', 'Unknown')} <{email_addr}>")
             log.info(f"  Subject: {subject}")
             
             # Send the email
