@@ -2,12 +2,14 @@ import { useState } from 'react'
 import { useReplies } from '../hooks/usePolling'
 import { MessageSquare, UserCheck, UserX, RefreshCw, Mail } from 'lucide-react'
 import KPICard from '../components/KPICard'
+import EmptyState from '../components/EmptyState'
+import { SkeletonPage } from '../components/Skeleton'
 
 export default function Replies() {
   const { data, loading, lastUpdated, refresh } = useReplies()
   const [filter, setFilter] = useState('all')
 
-  if (loading) return <div className="text-slate-400">Loading...</div>
+  if (loading) return <SkeletonPage />
   if (!data) return <div className="text-red-400">Failed to load replies</div>
 
   const filtered = data.replies.filter(r => {
@@ -63,9 +65,11 @@ export default function Replies() {
 
       <div className="space-y-4">
         {filtered.length === 0 ? (
-          <div className="bg-card-bg rounded-xl border border-card-border p-8 text-center text-slate-400">
-            No replies found
-          </div>
+          <EmptyState
+            icon={MessageSquare}
+            title="No replies yet"
+            description="Replies from your leads will appear here once they start responding to your emails."
+          />
         ) : (
           filtered.map((reply, i) => {
             const content = reply.reply_snippet || ''

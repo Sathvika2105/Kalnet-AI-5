@@ -2,7 +2,9 @@ import { useState } from 'react'
 import { useLeads } from '../hooks/usePolling'
 import DataTable from '../components/DataTable'
 import BulkUploadModal from '../components/BulkUploadModal'
-import { RefreshCw, Upload } from 'lucide-react'
+import EmptyState from '../components/EmptyState'
+import { SkeletonTable } from '../components/Skeleton'
+import { RefreshCw, Upload, Users } from 'lucide-react'
 
 export default function Leads() {
   const [filters, setFilters] = useState({ replied: '', opt_out: '', step: '' })
@@ -40,7 +42,7 @@ export default function Leads() {
     },
   ]
 
-  if (loading) return <div className="text-slate-400">Loading...</div>
+  if (loading) return <SkeletonTable rows={8} cols={10} />
 
   return (
     <div className="space-y-6">
@@ -112,7 +114,18 @@ export default function Leads() {
         </select>
       </div>
 
-      <DataTable columns={columns} data={leads} pageSize={15} />
+      {leads.length === 0 ? (
+        <EmptyState
+          icon={Users}
+          title="No leads yet"
+          description="Upload your first batch of leads using the Bulk Upload button above to get started with email automation."
+          action
+          actionLabel="Upload Leads"
+          onAction={() => setShowUpload(true)}
+        />
+      ) : (
+        <DataTable columns={columns} data={leads} pageSize={15} />
+      )}
     </div>
   )
 }

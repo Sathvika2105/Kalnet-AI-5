@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useSubjectLines } from '../hooks/usePolling'
 import api from '../api/client'
-import { RefreshCw, Mail } from 'lucide-react'
+import EmptyState from '../components/EmptyState'
+import { SkeletonPage } from '../components/Skeleton'
+import { RefreshCw, Mail, BarChart3 } from 'lucide-react'
 
 const EMAIL_TEMPLATES = {
   1: { label: 'Email #1 - Quick Intro', color: 'bg-blue-600/20 text-blue-400' },
@@ -10,7 +12,7 @@ const EMAIL_TEMPLATES = {
 }
 
 export default function SubjectLines() {
-  const { data: subjectsData, lastUpdated, refresh } = useSubjectLines()
+  const { data: subjectsData, loading, lastUpdated, refresh } = useSubjectLines()
   const [sentEmails, setSentEmails] = useState([])
   const [emailsLoading, setEmailsLoading] = useState(false)
   const [showEmails, setShowEmails] = useState(false)
@@ -30,6 +32,8 @@ export default function SubjectLines() {
       setEmailsLoading(false)
     }
   }
+
+  if (loading) return <SkeletonPage />
 
   return (
     <div className="space-y-8">
@@ -138,39 +142,43 @@ export default function SubjectLines() {
       )}
 
       {/* Subject Line Performance Ranking */}
-      {subjects.length > 0 && (
-        <>
-          <div className="pt-4">
-            <h2 className="text-xl font-bold text-white">Subject Line Performance</h2>
-            <p className="text-slate-400 mt-1">Ranked by reply rate</p>
-          </div>
+      <div className="pt-4">
+        <h2 className="text-xl font-bold text-white">Subject Line Performance</h2>
+        <p className="text-slate-400 mt-1">Ranked by reply rate</p>
+      </div>
 
-          <div className="space-y-4">
-            {subjects.map((s, i) => (
-              <div key={i} className="bg-card-bg rounded-xl border border-card-border p-6 flex items-center gap-6">
-                <div className="w-12 h-12 bg-blue-600/20 rounded-full flex items-center justify-center">
-                  <span className="text-lg font-bold text-blue-400">#{i + 1}</span>
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-white">{s.subject}</h3>
-                  <p className="text-sm text-slate-400 mt-1">{s.replies} replies</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-2xl font-bold text-green-400">{s.rate.toFixed(1)}%</p>
-                  <p className="text-xs text-slate-500">reply rate</p>
-                </div>
-                <div className="w-32">
-                  <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-green-500 rounded-full transition-all"
-                      style={{ width: `${Math.min(s.rate, 100)}%` }}
-                    />
-                  </div>
+      {subjects.length === 0 ? (
+        <EmptyState
+          icon={BarChart3}
+          title="No subject line data yet"
+          description="Subject line performance will appear here once emails have been sent and replies start coming in."
+        />
+      ) : (
+        <div className="space-y-4">
+          {subjects.map((s, i) => (
+            <div key={i} className="bg-card-bg rounded-xl border border-card-border p-6 flex items-center gap-6">
+              <div className="w-12 h-12 bg-blue-600/20 rounded-full flex items-center justify-center">
+                <span className="text-lg font-bold text-blue-400">#{i + 1}</span>
+              </div>
+              <div className="flex-1">
+                <h3 className="font-semibold text-white">{s.subject}</h3>
+                <p className="text-sm text-slate-400 mt-1">{s.replies} replies</p>
+              </div>
+              <div className="text-right">
+                <p className="text-2xl font-bold text-green-400">{s.rate.toFixed(1)}%</p>
+                <p className="text-xs text-slate-500">reply rate</p>
+              </div>
+              <div className="w-32">
+                <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-green-500 rounded-full transition-all"
+                    style={{ width: `${Math.min(s.rate, 100)}%` }}
+                  />
                 </div>
               </div>
-            ))}
-          </div>
-        </>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

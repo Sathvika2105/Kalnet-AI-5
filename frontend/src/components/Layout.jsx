@@ -1,8 +1,9 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
+import { useTheme } from '../context/ThemeContext'
 import {
   LayoutDashboard, Users, MessageSquare, BarChart3,
-  Settings, LogOut, Mail
+  Settings, LogOut, Mail, Sun, Moon
 } from 'lucide-react'
 
 const navItems = [
@@ -16,6 +17,7 @@ const navItems = [
 
 export default function Layout() {
   const { user, logout } = useAuth()
+  const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
 
   const handleLogout = () => {
@@ -61,12 +63,21 @@ export default function Layout() {
         <div className="p-4 border-t border-slate-700">
           <div className="flex items-center justify-between">
             <span className="text-sm text-slate-400">{user?.username}</span>
-            <button
-              onClick={handleLogout}
-              className="p-2 text-slate-400 hover:text-white hover:bg-sidebar-hover rounded-lg transition-colors"
-            >
-              <LogOut size={18} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={toggleTheme}
+                className="p-2 text-slate-400 hover:text-white hover:bg-sidebar-hover rounded-lg transition-colors"
+                title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+              >
+                {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+              </button>
+              <button
+                onClick={handleLogout}
+                className="p-2 text-slate-400 hover:text-white hover:bg-sidebar-hover rounded-lg transition-colors"
+              >
+                <LogOut size={18} />
+              </button>
+            </div>
           </div>
         </div>
       </aside>

@@ -36,8 +36,10 @@ def run_pipeline_task():
         run_pipeline()
         _set_status(running=False, success=True, message="Pipeline completed successfully", error="")
     except Exception as e:
+        import traceback
         error_msg = str(e)
-        logger.error(f"Pipeline task failed: {error_msg}")
+        tb = traceback.format_exc()
+        logger.error(f"Pipeline task failed: {error_msg}\n{tb}")
         _set_status(running=False, success=False, message="Pipeline failed", error=error_msg)
 
 

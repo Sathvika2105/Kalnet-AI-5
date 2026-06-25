@@ -1,7 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import api from '../api/client'
 import { useToast } from '../context/ToastContext'
-import { Save, Play, FileText, Loader2, CheckCircle, XCircle } from 'lucide-react'
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
+import { playSuccessSound, playErrorSound } from '../utils/sounds'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { SkeletonPage } from '../components/Skeleton'
+import { Save, Play, FileText, Loader2, XCircle } from 'lucide-react'
 
 export default function Settings() {
   const { addToast } = useToast()
@@ -12,6 +16,7 @@ export default function Settings() {
   const [logContent, setLogContent] = useState('')
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState(null)
+  const [showConfirm, setShowConfirm] = useState(false)
   const pollRef = useRef(null)
 
   useEffect(() => {
@@ -25,8 +30,10 @@ export default function Settings() {
     setSaving(true)
     try {
       await api.put('/settings', settings)
+      playSuccessSound()
       addToast('Settings saved successfully', 'success')
     } catch {
+      playErrorSound()
       addToast('Failed to save settings', 'error')
     }
     setSaving(false)
@@ -38,7 +45,19 @@ export default function Settings() {
     }
   }, [])
 
+  const loadLogs = async () => {
+    const res = await api.get(`/logs/${logType}`)
+    setLogContent(res.data.content)
+  }
+
+  useKeyboardShortcuts([
+    { key: 'r', handler: () => !running && setShowConfirm(true), allowInput: false },
+    { key: 'l', handler: () => loadLogs(), allowInput: false },
+    { key: 'Enter', ctrl: true, handler: () => handleSave(), allowInput: true },
+  ])
+
   const handleRunPipeline = async () => {
+    setShowConfirm(false)
     setRunning(true)
     setRunResult({ success: true, message: 'Pipeline is running...' })
     try {
@@ -52,10 +71,12 @@ export default function Settings() {
             setRunning(false)
             if (data.success) {
               setRunResult({ success: true, message: data.message })
+              playSuccessSound()
               addToast('Pipeline completed successfully', 'success')
             } else {
               const errMsg = data.error || 'Unknown error'
               setRunResult({ success: false, message: `Pipeline failed: ${errMsg}` })
+              playErrorSound()
               addToast(errMsg, 'error', 8000)
             }
           }
@@ -74,22 +95,37 @@ export default function Settings() {
     }
   }
 
-  const loadLogs = async () => {
-    const res = await api.get(`/logs/${logType}`)
-    setLogContent(res.data.content)
-  }
-
   const handleChange = (key, value) => {
     setSettings({ ...settings, [key]: value })
   }
 
-  if (loading) return <div className="text-slate-400">Loading...</div>
+  if (loading) return <SkeletonPage />
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-white">Settings</h1>
-        <p className="text-slate-400 mt-1">Configure pipeline and email settings</p>
+      <ConfirmDialog
+        isOpen={showConfirm}
+        title="Run Pipeline"
+        message="Are you sure you want to trigger the email automation pipeline? This will check for replies and send scheduled emails."
+        confirmLabel="Run Pipeline"
+        variant="warning"
+        onConfirm={handleRunPipeline}
+        onCancel={() => setShowConfirm(false)}
+      />
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-white">Settings</h1>
+          <p className="text-slate-400 mt-1">Configure pipeline and email settings</p>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-400">R</kbd>
+          <span>Run pipeline</span>
+          <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-400 ml-2">L</kbd>
+          <span>Load logs</span>
+          <kbd className="px-1.5 py-0.5 bg-slate-800 border border-slate-700 rounded text-slate-400 ml-2">Ctrl+Enter</kbd>
+          <span>Save</span>
+        </div>
       </div>
 
       {/* Run Pipeline Section */}
@@ -100,7 +136,7 @@ export default function Settings() {
             <p className="text-sm text-slate-400 mt-1">Trigger the email automation pipeline manually</p>
           </div>
           <button
-            onClick={handleRunPipeline}
+            onClick={() => setShowConfirm(true)}
             disabled={running}
             className="flex items-center gap-2 px-6 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white font-medium rounded-lg transition-colors"
           >

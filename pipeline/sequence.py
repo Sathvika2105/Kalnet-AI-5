@@ -1813,7 +1813,7 @@ ADVANCED_EMAIL_BODIES = {
                     "Last note from me. If the timing is ever right, "
                     f"I'm here: {_CALENDAR_LINK}\n\nWishing {'{company}'} all the best.\n\n"
                     "Best,\nTeam KALNET"
-                ).format(company="{company}"),
+                ).format(name="{name}", company="{company}"),
                 "medium": (
                     "Hi {name},\n\n"
                     "Closing the loop — this is my last note.\n\n"
@@ -1925,7 +1925,7 @@ ADVANCED_EMAIL_BODIES = {
                     "Circling back one more time — still believe there's a "
                     f"strong fit with {'{company}'}.\n\nOpen to reconnecting? {_CALENDAR_LINK}\n\n"
                     "Best,\nTeam KALNET"
-                ).format(company="{company}"),
+                ).format(name="{name}", company="{company}"),
                 "medium": (
                     "Hi {name},\n\n"
                     "One more note before I stop reaching out for good.\n\n"
@@ -3325,7 +3325,7 @@ def _run_with_dummy_data() -> None:
         score    = get_lead_score(lead)
         strategy = get_followup_strategy(lead)
         content  = get_advanced_email_content(lead)
-        print(f"  Lead    : {lead['name']} ({lead['company']})")
+        print(f"  Lead    : {lead.get('name', 'Unknown')} ({lead.get('company', 'Unknown')})")
         print(f"  Score   : {score}")
         print(f"  Strategy: {strategy['step']} / {strategy['version']} / "
               f"{strategy['length']} / {strategy['subject_type']}")

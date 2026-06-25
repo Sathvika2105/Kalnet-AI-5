@@ -1,6 +1,11 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useMetrics } from '../hooks/usePolling'
+import { useToast } from '../context/ToastContext'
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
+import { playSuccessSound, playErrorSound } from '../utils/sounds'
 import KPICard from '../components/KPICard'
+import ConfirmDialog from '../components/ConfirmDialog'
+import { SkeletonPage } from '../components/Skeleton'
 import { Users, Send, MessageSquare, TrendingUp, UserX, RefreshCw, Play, Loader2 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
 import api from '../api/client'
@@ -8,9 +13,11 @@ import api from '../api/client'
 const COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444']
 
 export default function Overview() {
+  const { addToast } = useToast()
   const { data: metrics, loading, lastUpdated, refresh } = useMetrics()
   const [running, setRunning] = useState(false)
   const [pipelineMsg, setPipelineMsg] = useState('')
+  const [showConfirm, setShowConfirm] = useState(false)
   const timerRef = useRef(null)
 
   useEffect(() => {
@@ -19,23 +26,50 @@ export default function Overview() {
     }
   }, [])
 
+  const pollRef = useRef(null)
+
   const runPipeline = async () => {
+    setShowConfirm(false)
     setRunning(true)
     setPipelineMsg('Pipeline is running...')
     try {
       await api.post('/pipeline/run')
-      timerRef.current = setTimeout(() => {
-        setRunning(false)
-        setPipelineMsg('')
-        refresh()
-      }, 30000)
+      pollRef.current = setInterval(async () => {
+        try {
+          const { data } = await api.get('/pipeline/status')
+          if (!data.running) {
+            clearInterval(pollRef.current)
+            pollRef.current = null
+            setRunning(false)
+            setPipelineMsg('')
+            if (data.success) {
+              playSuccessSound()
+              addToast('Pipeline completed successfully', 'success')
+            } else {
+              playErrorSound()
+              addToast(data.error || 'Pipeline failed', 'error', 8000)
+              setPipelineMsg(`Failed: ${data.error}`)
+            }
+            refresh()
+          }
+        } catch {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+          setRunning(false)
+          setPipelineMsg('Status check failed')
+        }
+      }, 2000)
     } catch (e) {
       setRunning(false)
-      setPipelineMsg('❌ Failed to trigger pipeline')
+      setPipelineMsg('Failed to trigger pipeline')
     }
   }
 
-  if (loading) return <div className="text-slate-400">Loading...</div>
+  useKeyboardShortcuts([
+    { key: 'r', handler: () => !running && setShowConfirm(true), allowInput: false },
+  ])
+
+  if (loading) return <SkeletonPage />
   if (!metrics) return <div className="text-red-400">Failed to load metrics</div>
 
   const tierData = Object.entries(metrics.tier_breakdown || {}).map(([tier, count]) => ({
@@ -52,6 +86,16 @@ export default function Overview() {
 
   return (
     <div className="space-y-8">
+      <ConfirmDialog
+        isOpen={showConfirm}
+        title="Run Pipeline"
+        message="Are you sure you want to trigger the email automation pipeline? This will check for replies and send scheduled emails."
+        confirmLabel="Run Pipeline"
+        variant="warning"
+        onConfirm={runPipeline}
+        onCancel={() => setShowConfirm(false)}
+      />
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Dashboard Overview</h1>
@@ -69,7 +113,7 @@ export default function Overview() {
             <span className="text-sm text-slate-400">{pipelineMsg}</span>
           )}
           <button
-            onClick={runPipeline}
+            onClick={() => setShowConfirm(true)}
             disabled={running}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-lg transition-colors text-sm"
           >

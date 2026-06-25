@@ -2,16 +2,62 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --bg-main: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-tertiary: #334155;
+  --text-primary: #ffffff;
+  --text-secondary: #94a3b8;
+  --border-color: #334155;
+  --sidebar-bg: #0f172a;
+  --sidebar-hover: #1e293b;
+  --card-bg: #1e293b;
+  --card-border: #334155;
+}
+
+[data-theme="light"] {
+  --bg-main: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --border-color: #e2e8f0;
+  --sidebar-bg: #f1f5f9;
+  --sidebar-hover: #e2e8f0;
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+}
+
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg-main);
+  color: var(--text-primary);
 }
+
+[data-theme="light"] .bg-slate-900 { background-color: var(--bg-main) !important; }
+[data-theme="light"] .bg-slate-800 { background-color: var(--bg-secondary) !important; }
+[data-theme="light"] .bg-slate-700 { background-color: var(--bg-tertiary) !important; }
+[data-theme="light"] .bg-sidebar-bg { background-color: var(--sidebar-bg) !important; }
+[data-theme="light"] .bg-card-bg { background-color: var(--card-bg) !important; }
+[data-theme="light"] .border-card-border { border-color: var(--card-border) !important; }
+[data-theme="light"] .border-slate-700,
+[data-theme="light"] .border-slate-600 { border-color: var(--border-color) !important; }
+[data-theme="light"] .text-white { color: var(--text-primary) !important; }
+[data-theme="light"] .text-slate-400 { color: var(--text-secondary) !important; }
+[data-theme="light"] .text-slate-500 { color: #64748b !important; }
+[data-theme="light"] .text-slate-300 { color: #334155 !important; }
+[data-theme="light"] .hover\:bg-sidebar-hover:hover { background-color: var(--sidebar-hover) !important; }
+[data-theme="light"] .hover\:bg-slate-700:hover { background-color: var(--bg-tertiary) !important; }
+[data-theme="light"] .hover\:bg-slate-800\/50:hover { background-color: rgba(0,0,0,0.03) !important; }
+[data-theme="light"] .bg-slate-900\/50 { background-color: var(--bg-secondary) !important; }
+[data-theme="light"] .bg-slate-800\/50 { background-color: var(--bg-secondary) !important; }
 
 ::-webkit-scrollbar {
   width: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #1e293b;
+  background: var(--bg-tertiary);
 }
 
 ::-webkit-scrollbar-thumb {

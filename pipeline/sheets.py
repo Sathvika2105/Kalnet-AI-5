@@ -15,18 +15,31 @@ SCOPES = [
 import os
 import json
 
-raw = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-if os.path.isfile(raw):
-    with open(raw) as f:
-        service_account_info = json.load(f)
-else:
-    service_account_info = json.loads(raw)
-creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
-client = gspread.authorize(creds)
+_sheets_client = None
+_sheets_sheet = None
 
-sheet = client.open_by_key(
-    "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
-).sheet1
+def _get_sheets():
+    global _sheets_client, _sheets_sheet
+    if _sheets_sheet is not None:
+        return _sheets_sheet
+    raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if not raw:
+        raise RuntimeError(
+            "GOOGLE_SERVICE_ACCOUNT_JSON environment variable is not set. "
+            "Set it to the raw JSON string or a file path containing the "
+            "Google service account credentials."
+        )
+    if os.path.isfile(raw):
+        with open(raw) as f:
+            service_account_info = json.load(f)
+    else:
+        service_account_info = json.loads(raw)
+    creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+    _sheets_client = gspread.authorize(creds)
+    _sheets_sheet = _sheets_client.open_by_key(
+        "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
+    ).sheet1
+    return _sheets_sheet
 
 
 # CLEAN LEAD DATA
@@ -128,6 +141,7 @@ def clean_lead_data(lead):
 # GET ALL LEADS
 def get_all_leads():
 
+    sheet = _get_sheets()
     records = sheet.get_all_records()
 
     leads = []
@@ -187,7 +201,7 @@ def bulk_add_leads(list_of_rows):
     try:
 
         # Get existing emails from sheet
-        records = sheet.get_all_records()
+        records = _get_sheets().get_all_records()
 
         existing_emails = {
             str(row.get("email", "")).strip().lower()
@@ -215,7 +229,7 @@ def bulk_add_leads(list_of_rows):
 
             return {"added": 0, "skipped": duplicate_count}
 
-        sheet.append_rows(
+        _get_sheets().append_rows(
             filtered_rows,
             value_input_option="USER_ENTERED"
         )
@@ -238,6 +252,7 @@ def mark_email_sent(
     subject_line=""
 ):
 
+    sheet = _get_sheets()
     records = sheet.get_all_records()
 
     for index, row in enumerate(records, start=2):
@@ -284,6 +299,7 @@ def mark_replied(
     is_opt_out=False
 ):
 
+    sheet = _get_sheets()
     records = sheet.get_all_records()
 
     for index, row in enumerate(records, start=2):
@@ -328,6 +344,7 @@ def mark_unsubscribed(email: str, snippet: str = "") -> bool:
     Returns True if a row was updated, False otherwise.
     """
     try:
+        sheet = _get_sheets()
         records = sheet.get_all_records()
         last_row = None
         for i, row in enumerate(records, start=2):
