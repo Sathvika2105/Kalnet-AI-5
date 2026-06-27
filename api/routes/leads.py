@@ -87,6 +87,9 @@ def bulk_upload_leads(leads: List[NewLead], current_user: User = Depends(get_cur
         # Hand off the formatted list to the database module
         result = sheets.bulk_add_leads(formatted_leads_for_sheets)
 
+        if result is False:
+            raise HTTPException(status_code=500, detail="Failed to add leads to Google Sheets")
+
         msg = f"Successfully added {result['added']} lead(s)."
         if result["skipped"] > 0:
             msg += f" {result['skipped']} duplicate(s) skipped."

@@ -12,6 +12,11 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs')
+os.makedirs(log_dir, exist_ok=True)
+
+log = logging.getLogger("check_replies")
+
 try:
     import sheets
 except ImportError:
@@ -39,11 +44,6 @@ UNSUBSCRIBE_TRIGGERS = [
     "not interested",
     "don't contact",
 ]
-
-log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs')
-os.makedirs(log_dir, exist_ok=True)
-
-log = logging.getLogger("check_replies")
 
 
 def validate_env():

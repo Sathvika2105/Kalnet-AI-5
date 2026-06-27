@@ -165,14 +165,14 @@ export default function SubjectLines() {
                 <p className="text-sm text-slate-400 mt-1">{s.replies} replies</p>
               </div>
               <div className="text-right">
-                <p className="text-2xl font-bold text-green-400">{s.rate.toFixed(1)}%</p>
+                <p className="text-2xl font-bold text-green-400">{s.rate != null ? s.rate.toFixed(1) : '0.0'}%</p>
                 <p className="text-xs text-slate-500">reply rate</p>
               </div>
               <div className="w-32">
                 <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-green-500 rounded-full transition-all"
-                    style={{ width: `${Math.min(s.rate, 100)}%` }}
+                    style={{ width: `${Math.min(s.rate ?? 0, 100)}%` }}
                   />
                 </div>
               </div>

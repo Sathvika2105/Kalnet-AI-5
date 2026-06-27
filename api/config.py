@@ -14,6 +14,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
 DATABASE_URL = f"sqlite:///{Path(__file__).parent / 'dashboard.db'}"
 
-# Default admin credentials (change in production)
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+if not ADMIN_PASSWORD:
+    raise RuntimeError(
+        "ADMIN_PASSWORD must be set in .env"
+    )

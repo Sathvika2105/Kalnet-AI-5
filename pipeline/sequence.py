@@ -2539,7 +2539,10 @@ def get_sequence_due_today(leads: List[Dict]) -> List[Dict]:
     for lead in leads:
         lead_id       = lead.get("lead_id", "unknown")
         name          = lead.get("name", "Unknown")
-        sequence_step = int(lead.get("sequence_step", 0) or 0)
+        try:
+            sequence_step = int(lead.get("sequence_step", 0) or 0)
+        except (ValueError, TypeError):
+            sequence_step = 0
 
         # -- Guard: skip if lead has replied --------------------------------
         if lead.get("replied", False):

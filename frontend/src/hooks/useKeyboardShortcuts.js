@@ -1,10 +1,15 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 export function useKeyboardShortcuts(shortcuts) {
+  const shortcutsRef = useRef(shortcuts)
+  shortcutsRef.current = shortcuts
+
   useEffect(() => {
     const handler = (e) => {
+      const current = shortcutsRef.current
+
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
-        for (const s of shortcuts) {
+        for (const s of current) {
           if (s.ctrl !== undefined) {
             if (e.ctrlKey || e.metaKey) {
               const key = e.key.toLowerCase()
@@ -16,7 +21,7 @@ export function useKeyboardShortcuts(shortcuts) {
         }
       }
 
-      for (const s of shortcuts) {
+      for (const s of current) {
         const mod = s.ctrl ? (e.ctrlKey || e.metaKey) : true
         const keyMatch = Array.isArray(s.key)
           ? s.key.includes(e.key.toLowerCase())
@@ -37,5 +42,5 @@ export function useKeyboardShortcuts(shortcuts) {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [shortcuts])
+  }, [])
 }

@@ -5,7 +5,7 @@ import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { playSuccessSound, playErrorSound } from '../utils/sounds'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { SkeletonPage } from '../components/Skeleton'
-import { Save, Play, FileText, Loader2, XCircle, Radio } from 'lucide-react'
+import { Save, Play, FileText, Loader2, XCircle } from 'lucide-react'
 
 export default function Settings() {
   const { addToast } = useToast()
@@ -25,6 +25,9 @@ export default function Settings() {
   useEffect(() => {
     api.get('/settings').then(res => {
       setSettings(res.data)
+      setLoading(false)
+    }).catch(() => {
+      addToast('Failed to load settings', 'error')
       setLoading(false)
     })
   }, [])
@@ -212,7 +215,7 @@ export default function Settings() {
             <label className="block text-sm text-slate-400 mb-2">Delay Between Emails (seconds)</label>
             <input
               type="number"
-              value={settings.delay_between_emails || ''}
+              value={settings.delay_between_emails != null ? settings.delay_between_emails : ''}
               onChange={(e) => handleChange('delay_between_emails', e.target.value)}
               className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
             />
@@ -222,7 +225,7 @@ export default function Settings() {
             <label className="block text-sm text-slate-400 mb-2">Max Emails Per Run</label>
             <input
               type="number"
-              value={settings.max_emails_per_run || ''}
+              value={settings.max_emails_per_run != null ? settings.max_emails_per_run : ''}
               onChange={(e) => handleChange('max_emails_per_run', e.target.value)}
               className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
             />
@@ -233,7 +236,7 @@ export default function Settings() {
               <label className="block text-sm text-slate-400 mb-2">Email 1 (Days)</label>
               <input
                 type="number"
-                value={settings.email_1_delay_days || ''}
+                value={settings.email_1_delay_days != null ? settings.email_1_delay_days : ''}
                 onChange={(e) => handleChange('email_1_delay_days', e.target.value)}
                 className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
               />
@@ -242,7 +245,7 @@ export default function Settings() {
               <label className="block text-sm text-slate-400 mb-2">Email 2 (Days)</label>
               <input
                 type="number"
-                value={settings.email_2_delay_days || ''}
+                value={settings.email_2_delay_days != null ? settings.email_2_delay_days : ''}
                 onChange={(e) => handleChange('email_2_delay_days', e.target.value)}
                 className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
               />
@@ -251,7 +254,7 @@ export default function Settings() {
               <label className="block text-sm text-slate-400 mb-2">Email 3 (Days)</label>
               <input
                 type="number"
-                value={settings.email_3_delay_days || ''}
+                value={settings.email_3_delay_days != null ? settings.email_3_delay_days : ''}
                 onChange={(e) => handleChange('email_3_delay_days', e.target.value)}
                 className="w-full px-4 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white"
               />

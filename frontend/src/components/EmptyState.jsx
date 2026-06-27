@@ -8,7 +8,7 @@ export default function EmptyState({ icon: Icon = Inbox, title = 'No data found'
       {description && <p className="text-sm text-slate-500 mb-6 max-w-md mx-auto">{description}</p>}
       {action && (
         <button
-          onClick={onAction}
+          onClick={() => onAction?.()}
           className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm transition-colors"
         >
           {actionLabel}

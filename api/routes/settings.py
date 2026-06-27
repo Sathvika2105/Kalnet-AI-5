@@ -4,7 +4,6 @@ from typing import Optional
 from api.auth import get_current_user
 from api.models import User, Setting, get_db
 from sqlalchemy.orm import Session
-from fastapi import Depends
 
 router = APIRouter(prefix="/api", tags=["settings"])
 

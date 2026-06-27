@@ -19,13 +19,14 @@ export default function Overview() {
   const [showConfirm, setShowConfirm] = useState(false)
   const timerRef = useRef(null)
 
+  const pollRef = useRef(null)
+
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
+      if (pollRef.current) clearInterval(pollRef.current)
     }
   }, [])
-
-  const pollRef = useRef(null)
 
   const runPipeline = async () => {
     setShowConfirm(false)

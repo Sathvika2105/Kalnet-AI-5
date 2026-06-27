@@ -10,7 +10,7 @@ export default function Analytics() {
   if (loading) return <div className="text-slate-400">Loading...</div>
   if (!data) return <div className="text-red-400">Failed to load analytics</div>
 
-  const { overview, sequence_steps } = data
+  const { overview = {}, sequence_steps = {} } = data
 
   const tierData = Object.entries(overview.tier_breakdown || {}).map(([tier, count]) => ({
     name: `Tier ${tier}`,

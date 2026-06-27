@@ -50,15 +50,26 @@ def get_pipeline_status(current_user: User = Depends(get_current_user)):
         return dict(_pipeline_status)
 
 
-# ── For UI (requires login) ──────────────────────────
-@router.post("/pipeline/run")
-def run_pipeline_ui(current_user: User = Depends(get_current_user)):
+def _trigger_pipeline():
     with _status_lock:
         if _pipeline_status["running"]:
-            return {"message": "Pipeline is already running"}
+            return False
+        _pipeline_status["running"] = True
+        _pipeline_status["success"] = None
+        _pipeline_status["message"] = "Pipeline is running..."
+        _pipeline_status["error"] = ""
+        _pipeline_status["timestamp"] = datetime.now().isoformat()
     thread = threading.Thread(target=run_pipeline_task)
     thread.daemon = True
     thread.start()
+    return True
+
+
+# ── For UI (requires login) ──────────────────────────
+@router.post("/pipeline/run")
+def run_pipeline_ui(current_user: User = Depends(get_current_user)):
+    if not _trigger_pipeline():
+        return {"message": "Pipeline is already running"}
     return {"message": "Pipeline triggered successfully"}
 
 
@@ -68,12 +79,8 @@ def trigger_pipeline(x_pipeline_secret: str = Header(None)):
     secret = os.getenv("PIPELINE_TRIGGER_SECRET")
     if not secret or x_pipeline_secret != secret:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    with _status_lock:
-        if _pipeline_status["running"]:
-            return {"status": "Pipeline already running"}
-    thread = threading.Thread(target=run_pipeline_task)
-    thread.daemon = True
-    thread.start()
+    if not _trigger_pipeline():
+        return {"status": "Pipeline already running"}
     return {"status": "Pipeline triggered successfully"}
 
 

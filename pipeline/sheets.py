@@ -14,14 +14,19 @@ SCOPES = [
 
 import os
 import json
+import threading
 
 _sheets_client = None
 _sheets_sheet = None
+_sheets_lock = threading.Lock()
 
 def _get_sheets():
     global _sheets_client, _sheets_sheet
     if _sheets_sheet is not None:
         return _sheets_sheet
+    with _sheets_lock:
+        if _sheets_sheet is not None:
+            return _sheets_sheet
     raw = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
     if not raw:
         raise RuntimeError(
