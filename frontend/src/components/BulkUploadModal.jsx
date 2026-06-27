@@ -2,40 +2,66 @@ import { useState, useRef } from 'react'
 import api from '../api/client'
 import { Upload, X, FileText, AlertCircle, CheckCircle, Loader2, AlertTriangle } from 'lucide-react'
 
-function isHeader(name, email) {
-  return /^(name|full.name|first.name|last.name|contact)$/i.test(name) ||
-         /^email/i.test(email) ||
-         !email.includes('@')
+const COLUMN_ALIASES = {
+  name: ['name', 'full name', 'full_name', 'first name', 'first_name', 'contact name', 'contact_name', 'prospect'],
+  email: ['email', 'e-mail', 'mail', 'email address', 'email_address', 'email id', 'e-mail id'],
+  company: ['company', 'company name', 'company_name', 'organization', 'organisation', 'org', 'business', 'business name', 'business_name', 'account', 'account name'],
+  tier: ['tier', 'level', 'priority', 'segment', 'tier level'],
+  subject_line: ['subject line', 'subject', 'subject_line', 'email subject', 'topic', 'email topic'],
+}
+
+function findColumnIndex(headers, key) {
+  const aliases = COLUMN_ALIASES[key]
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i].replace(/^"|"$/g, '').trim().toLowerCase()
+    if (aliases.some(a => h === a)) return i
+  }
+  return -1
+}
+
+function parseRowsFromParts(lines, delimiter) {
+  if (lines.length === 0) return []
+  const partsList = lines.map(l => {
+    return l.split(delimiter).map(p => p.trim().replace(/^"|"$/g, ''))
+  })
+
+  const headerIdx = {}
+  const first = partsList[0]
+  for (const key of Object.keys(COLUMN_ALIASES)) {
+    const idx = findColumnIndex(first, key)
+    if (idx !== -1) headerIdx[key] = idx
+  }
+
+  const hasHeaders = Object.keys(headerIdx).length >= 2
+  const startRow = hasHeaders ? 1 : 0
+
+  const rows = []
+  for (let i = startRow; i < partsList.length; i++) {
+    const parts = partsList[i]
+    if (parts.length < 2) continue
+    let name, email
+    if (hasHeaders) {
+      name = (parts[headerIdx.name] || '').trim()
+      email = (parts[headerIdx.email] || '').trim()
+    } else {
+      name = (parts[0] || '').trim()
+      email = (parts[1] || '').trim()
+    }
+    if (!name || !email || !email.includes('@')) continue
+    const company = hasHeaders ? (parts[headerIdx.company] || '').trim() : (parts[2] || '').trim()
+    const tierRaw = hasHeaders ? (parts[headerIdx.tier] || '1').trim() : (parts[3] || '1').trim()
+    const subject_line = hasHeaders ? (parts[headerIdx.subject_line] || '').trim() : (parts[4] || '').trim()
+    rows.push({ name, email, company, tier: parseInt(tierRaw) || 1, subject_line })
+  }
+  return rows
 }
 
 function parseCSV(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-  if (lines.length === 0) return []
-  const rows = []
-  for (const line of lines) {
-    const parts = line.split(',').map(p => p.trim().replace(/^"|"$/g, ''))
-    if (parts.length < 2) continue
-    const [name, email, company = '', tier = '1', subject_line = ''] = parts
-    if (!name || !email) continue
-    if (rows.length === 0 && isHeader(name, email)) continue
-    rows.push({ name, email, company, tier: parseInt(tier) || 1, subject_line })
-  }
-  return rows
+  return parseRowsFromParts(text.split('\n').map(l => l.trim()).filter(Boolean), /,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
 }
 
 function parsePasted(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-  if (lines.length === 0) return []
-  const rows = []
-  for (const line of lines) {
-    const parts = line.split(/[\t,]/).map(p => p.trim())
-    if (parts.length < 2) continue
-    const [name, email, company = '', tier = '1', subject_line = ''] = parts
-    if (!name || !email) continue
-    if (rows.length === 0 && isHeader(name, email)) continue
-    rows.push({ name, email, company, tier: parseInt(tier) || 1, subject_line })
-  }
-  return rows
+  return parseRowsFromParts(text.split('\n').map(l => l.trim()).filter(Boolean), /[\t,]/)
 }
 
 export default function BulkUploadModal({ isOpen, onClose, onSuccess }) {
