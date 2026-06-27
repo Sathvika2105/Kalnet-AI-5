@@ -215,7 +215,7 @@ export default function BulkUploadModal({ isOpen, onClose, onSuccess }) {
                   </thead>
                   <tbody className="divide-y divide-card-border">
                     {parsedRows.map((row, i) => (
-                      <tr key={i} className="text-slate-300 hover:bg-slate-800/50">
+                      <tr key={row.email || i} className="text-slate-300 hover:bg-slate-800/50">
                         <td className="px-4 py-2.5">{row.name}</td>
                         <td className="px-4 py-2.5 text-slate-400">{row.email}</td>
                         <td className="px-4 py-2.5">{row.company}</td>

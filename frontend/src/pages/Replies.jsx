@@ -75,7 +75,7 @@ export default function Replies() {
             const content = reply.reply_snippet || ''
 
             return (
-              <div key={i} className="bg-card-bg rounded-xl border border-card-border p-6">
+              <div key={reply.lead_id || reply.email || i} className="bg-card-bg rounded-xl border border-card-border p-6">
                 <div className="flex items-start justify-between">
                   <div>
                     <h3 className="font-semibold text-white">{reply.name}</h3>

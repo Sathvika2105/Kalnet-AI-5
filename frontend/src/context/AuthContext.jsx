@@ -8,15 +8,10 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = localStorage.getItem('token')
-    if (token) {
-      api.get('/auth/me')
-        .then(res => setUser(res.data))
-        .catch(() => localStorage.removeItem('token'))
-        .finally(() => setLoading(false))
-    } else {
-      setLoading(false)
-    }
+    api.get('/auth/me')
+      .then(res => setUser(res.data))
+      .catch(() => setUser(null))
+      .finally(() => setLoading(false))
   }, [])
 
   const login = async (username, password) => {
@@ -24,12 +19,15 @@ export function AuthProvider({ children }) {
     formData.append('username', username)
     formData.append('password', password)
     const res = await api.post('/auth/login', formData)
-    localStorage.setItem('token', res.data.access_token)
     setUser({ username: res.data.username })
   }
 
-  const logout = () => {
-    localStorage.removeItem('token')
+  const logout = async () => {
+    try {
+      await api.post('/auth/logout')
+    } catch {
+      // ignore server errors on logout
+    }
     setUser(null)
   }
 

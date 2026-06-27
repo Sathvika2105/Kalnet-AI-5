@@ -77,7 +77,7 @@ export default function DataTable({ columns, data, searchable = true, pageSize =
           </thead>
           <tbody>
             {paged.map((row, i) => (
-              <tr key={i} className="border-b border-card-border hover:bg-slate-800/50 transition-colors">
+              <tr key={row.lead_id || row.id || i} className="border-b border-card-border hover:bg-slate-800/50 transition-colors">
                 {columns.map(col => (
                   <td key={col.key} className="px-4 py-3 text-sm text-slate-300">
                     {col.render ? col.render(row[col.key], row) : row[col.key]}

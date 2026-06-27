@@ -156,7 +156,7 @@ export default function SubjectLines() {
       ) : (
         <div className="space-y-4">
           {subjects.map((s, i) => (
-            <div key={i} className="bg-card-bg rounded-xl border border-card-border p-6 flex items-center gap-6">
+            <div key={s.subject || i} className="bg-card-bg rounded-xl border border-card-border p-6 flex items-center gap-6">
               <div className="w-12 h-12 bg-blue-600/20 rounded-full flex items-center justify-center">
                 <span className="text-lg font-bold text-blue-400">#{i + 1}</span>
               </div>
