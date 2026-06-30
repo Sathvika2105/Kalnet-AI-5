@@ -40,7 +40,9 @@ if sys.stdout.encoding is None or sys.stdout.encoding.lower() not in ('utf-8', '
     )
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+_root = os.path.join(os.path.dirname(__file__), '..')
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
 # Import pipeline modules
 from pipeline import send_email, sequence, sheets, check_replies
@@ -102,8 +104,28 @@ log = logging.getLogger(__name__)
 # ──────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────
-DELAY_BETWEEN_EMAILS = 30  # seconds, to avoid rate limiting
-MAX_EMAILS_PER_RUN = 50    # safety limit
+_DELAY = 10
+_MAX = 50
+
+
+def _get_settings():
+    delay = _DELAY
+    max_emails = _MAX
+    try:
+        from api.models import Setting, SessionLocal
+        db = SessionLocal()
+        try:
+            row = db.query(Setting).filter(Setting.key == "delay_between_emails").first()
+            if row and row.value:
+                delay = int(row.value)
+            row = db.query(Setting).filter(Setting.key == "max_emails_per_run").first()
+            if row and row.value:
+                max_emails = int(row.value)
+        finally:
+            db.close()
+    except Exception as e:
+        log.warning(f"Could not load settings from DB, using defaults: {e}")
+    return delay, max_emails
 
 
 # ──────────────────────────────────────────────
@@ -177,7 +199,7 @@ def step_3_identify_due_emails(leads):
         return []
 
 
-def step_4_send_emails(due_leads):
+def step_4_send_emails(due_leads, delay=10, max_emails=50):
     """
     Step 4: Send emails to leads who are due
     - Gets email content from sequence module
@@ -197,29 +219,29 @@ def step_4_send_emails(due_leads):
         return sent_count, failed_count
     
     # Limit emails per run for safety
-    leads_to_send = due_leads[:MAX_EMAILS_PER_RUN]
-    
+    leads_to_send = due_leads[:max_emails]
+
     for idx, lead in enumerate(leads_to_send, 1):
         try:
             # Get email content for this lead
             email_content = sequence.get_email_content(lead)
             subject = email_content['subject']
             body = email_content['body']
-            
+
             lead_id = lead.get('lead_id', 'unknown')
             email_addr = lead.get('email', 'unknown')
             email_number = lead.get('email_number', 0)
-            
+
             log.info(f"\n[{idx}/{len(leads_to_send)}] Sending Email #{email_number}")
             log.info(f"  To: {lead.get('name', 'Unknown')} <{email_addr}>")
             log.info(f"  Subject: {subject}")
-            
+
             # Send the email
             result = send_email.send_email(email_addr, subject, body)
-            
+
             if result['success']:
                 log.info(f"  ✅ Email sent successfully")
-                
+
                 # Update Google Sheets
                 try:
                     lead_tier = lead.get("tier", "1")
@@ -232,10 +254,10 @@ def step_4_send_emails(due_leads):
             else:
                 log.error(f"  ❌ Failed to send email: {result['message']}")
                 failed_count += 1
-            
+
             # Delay between emails to avoid rate limiting
             if idx < len(leads_to_send):
-                time.sleep(DELAY_BETWEEN_EMAILS)
+                time.sleep(delay)
                 
         except Exception as e:
             log.error(f"  ❌ Error processing lead {lead.get('lead_id')}: {e}")
@@ -321,6 +343,8 @@ def run_pipeline():
     log.info("KALNET AI-5 EMAIL AUTOMATION PIPELINE")
     log.info(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log.info("=" * 70 + "\n")
+
+    delay, max_emails = _get_settings()
     
     # Initialize counters
     sent_count = 0
@@ -342,7 +366,7 @@ def run_pipeline():
         
         # Step 4: Send emails to due leads
         if due_leads:
-            sent_count, failed_count = step_4_send_emails(due_leads)
+            sent_count, failed_count = step_4_send_emails(due_leads, delay, max_emails)
         else:
             log.info("=" * 70)
             log.info("STEP 4: No leads to email today")

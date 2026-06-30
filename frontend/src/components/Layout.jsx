@@ -1,12 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useTheme } from '../context/ThemeContext'
-import { useToast } from '../context/ToastContext'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
-import { playSuccessSound, playErrorSound } from '../utils/sounds'
+import { useRunPipeline } from '../hooks/useRunPipeline'
 import ConfirmDialog from './ConfirmDialog'
-import api from '../api/client'
 import {
   LayoutDashboard, Users, MessageSquare, BarChart3,
   Settings, LogOut, Mail, Sun, Moon, Play, Loader2
@@ -24,55 +22,13 @@ const navItems = [
 export default function Layout() {
   const { user, logout } = useAuth()
   const { theme, toggleTheme } = useTheme()
-  const { addToast } = useToast()
   const navigate = useNavigate()
   const [showConfirm, setShowConfirm] = useState(false)
-  const [running, setRunning] = useState(false)
-  const [pipelineMsg, setPipelineMsg] = useState('')
-  const pollRef = useRef(null)
+  const { running, pipelineMsg, run: runPipeline } = useRunPipeline()
 
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
-    }
-  }, [])
-
-  const runPipeline = async () => {
+  const handleRunPipeline = () => {
     setShowConfirm(false)
-    setRunning(true)
-    setPipelineMsg('Running...')
-    try {
-      await api.post('/pipeline/run')
-      pollRef.current = setInterval(async () => {
-        try {
-          const { data } = await api.get('/pipeline/status')
-          if (!data.running) {
-            clearInterval(pollRef.current)
-            pollRef.current = null
-            setRunning(false)
-            setPipelineMsg('')
-            if (data.success) {
-              playSuccessSound()
-              addToast('Pipeline completed successfully', 'success')
-            } else {
-              playErrorSound()
-              addToast(data.error || 'Pipeline failed', 'error', 8000)
-              setPipelineMsg('Failed')
-            }
-          } else {
-            setPipelineMsg('Running...')
-          }
-        } catch {
-          clearInterval(pollRef.current)
-          pollRef.current = null
-          setRunning(false)
-          setPipelineMsg('')
-        }
-      }, 2000)
-    } catch {
-      setRunning(false)
-      setPipelineMsg('Failed to trigger')
-    }
+    runPipeline()
   }
 
   useKeyboardShortcuts([
@@ -92,7 +48,7 @@ export default function Layout() {
         message="Are you sure you want to trigger the email automation pipeline?"
         confirmLabel="Run Pipeline"
         variant="warning"
-        onConfirm={runPipeline}
+        onConfirm={handleRunPipeline}
         onCancel={() => setShowConfirm(false)}
       />
 

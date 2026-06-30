@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import api from '../api/client'
 import { useToast } from '../context/ToastContext'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
-import { playSuccessSound, playErrorSound } from '../utils/sounds'
+import { useRunPipeline } from '../hooks/useRunPipeline'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { SkeletonPage } from '../components/Skeleton'
 import { Save, Play, FileText, Loader2, XCircle } from 'lucide-react'
@@ -14,13 +14,21 @@ export default function Settings() {
   const [saving, setSaving] = useState(false)
   const [logType, setLogType] = useState('pipeline')
   const [logContent, setLogContent] = useState('')
-  const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState(null)
   const [showConfirm, setShowConfirm] = useState(false)
   const [logStreaming, setLogStreaming] = useState(false)
-  const pollRef = useRef(null)
   const logPollRef = useRef(null)
   const logContainerRef = useRef(null)
+
+  const { running, pipelineMsg, run } = useRunPipeline({
+    onComplete: (data) => {
+      if (data.success) {
+        setRunResult({ success: true, message: data.message })
+      } else {
+        setRunResult({ success: false, message: `Pipeline failed: ${data.error || 'Unknown error'}` })
+      }
+    },
+  })
 
   useEffect(() => {
     api.get('/settings').then(res => {
@@ -36,10 +44,8 @@ export default function Settings() {
     setSaving(true)
     try {
       await api.put('/settings', settings)
-      playSuccessSound()
       addToast('Settings saved successfully', 'success')
     } catch {
-      playErrorSound()
       addToast('Failed to save settings', 'error')
     }
     setSaving(false)
@@ -47,7 +53,6 @@ export default function Settings() {
 
   useEffect(() => {
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
       if (logPollRef.current) clearInterval(logPollRef.current)
     }
   }, [])
@@ -89,43 +94,10 @@ export default function Settings() {
     { key: 'Enter', ctrl: true, handler: () => handleSave(), allowInput: true },
   ])
 
-  const handleRunPipeline = async () => {
+  const handleRunPipeline = () => {
     setShowConfirm(false)
-    setRunning(true)
     setRunResult({ success: true, message: 'Pipeline is running...' })
-    try {
-      await api.post('/pipeline/run')
-      pollRef.current = setInterval(async () => {
-        try {
-          const { data } = await api.get('/pipeline/status')
-          if (!data.running) {
-            clearInterval(pollRef.current)
-            pollRef.current = null
-            setRunning(false)
-            if (data.success) {
-              setRunResult({ success: true, message: data.message })
-              playSuccessSound()
-              addToast('Pipeline completed successfully', 'success')
-            } else {
-              const errMsg = data.error || 'Unknown error'
-              setRunResult({ success: false, message: `Pipeline failed: ${errMsg}` })
-              playErrorSound()
-              addToast(errMsg, 'error', 8000)
-            }
-          }
-        } catch {
-          clearInterval(pollRef.current)
-          pollRef.current = null
-          setRunning(false)
-          setRunResult({ success: false, message: 'Failed to check pipeline status' })
-        }
-      }, 2000)
-    } catch (err) {
-      setRunning(false)
-      const msg = err.response?.data?.error || 'Pipeline failed'
-      setRunResult({ success: false, message: msg })
-      addToast(msg, 'error', 8000)
-    }
+    run()
   }
 
   const handleChange = (key, value) => {

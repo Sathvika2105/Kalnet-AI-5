@@ -30,8 +30,6 @@ def _set_status(running=None, success=None, message=None, error=None):
 def run_pipeline_task():
     _set_status(running=True, success=None, message="Pipeline is running...", error="")
     try:
-        import sys
-        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         from pipeline.run import run_pipeline
         run_pipeline()
         _set_status(running=False, success=True, message="Pipeline completed successfully", error="")

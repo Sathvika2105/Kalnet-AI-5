@@ -1,12 +1,9 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime
 from api.auth import get_current_user
 from api.models import User
-import sys, os
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 from pipeline import sheets
 
 router = APIRouter(prefix="/api", tags=["leads"])
@@ -56,7 +53,7 @@ def get_leads(
 def get_lead(lead_id: str, current_user: User = Depends(get_current_user)):
     lead = sheets.get_lead_by_id(lead_id)
     if not lead:
-        return {"error": "Lead not found"}, 404
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
     return lead
 
 

@@ -92,7 +92,7 @@ export default function SubjectLines() {
                     const step = lead.sequence_step
                     const template = EMAIL_TEMPLATES[step] || EMAIL_TEMPLATES[1]
                     return (
-                      <tr key={i} className="border-b border-card-border hover:bg-slate-800/50 transition-colors">
+                      <tr key={lead.lead_id || i} className="border-b border-card-border hover:bg-slate-800/50 transition-colors">
                         <td className="px-4 py-4">
                           <div>
                             <p className="text-sm font-medium text-white">{lead.name}</p>

@@ -10,7 +10,9 @@ from datetime import date, timedelta
 from email.header import decode_header
 from dotenv import load_dotenv
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
 log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'logs')
 os.makedirs(log_dir, exist_ok=True)
@@ -18,9 +20,9 @@ os.makedirs(log_dir, exist_ok=True)
 log = logging.getLogger("check_replies")
 
 try:
-    import sheets
+    from pipeline import sheets
 except ImportError:
-    log.error("Cannot import sheets.py — make sure sheets.py is in the same pipeline/ folder")
+    log.error("Cannot import pipeline.sheets — make sure the project root is in sys.path")
     sys.exit(1)
 
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env')
@@ -225,7 +227,7 @@ def check_for_replies():
     total_unsub   = 0
 
     try:
-        mail.select('"[Gmail]/All Mail"')
+        mail.select('[Gmail]/All Mail')
 
         seven_days_ago = date.today() - timedelta(days=7)
         imap_date = seven_days_ago.strftime("%d-%b-%Y")
@@ -267,8 +269,8 @@ def check_for_replies():
                     log.info("  Not a tracked lead — skipping")
                     try:
                         mail.store(msg_id, "+FLAGS", "\\Deleted")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.warning(f"  Could not archive non-lead email: {e}")
                     continue
 
                 total_matched += 1
@@ -289,8 +291,8 @@ def check_for_replies():
                     try:
                         mail.store(msg_id, "+FLAGS", "\\Deleted")
                         log.info("  Archived from INBOX")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        log.warning(f"  Could not archive replied email: {e}")
                     continue
 
                 if is_unsub:
@@ -338,16 +340,16 @@ def check_for_replies():
 
         try:
             mail.expunge()
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"IMAP expunge failed: {e}")
 
     finally:
         try:
             mail.close()
             mail.logout()
             log.info("IMAP connection closed")
-        except Exception:
-            pass
+        except Exception as e:
+            log.warning(f"IMAP close/logout failed: {e}")
 
     log.info("")
     log.info("-" * 40)

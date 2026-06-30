@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from api.auth import get_current_user
@@ -19,7 +19,7 @@ class SettingsUpdate(BaseModel):
 
 
 DEFAULT_SETTINGS = {
-    "delay_between_emails": "30",
+    "delay_between_emails": "10",
     "max_emails_per_run": "50",
     "email_1_delay_days": "0",
     "email_2_delay_days": "5",
@@ -47,8 +47,11 @@ def update_settings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    update_dict = update.dict(exclude_none=True)
+    update_dict = update.model_dump(exclude_none=True)
     for key, value in update_dict.items():
+        if value is not None and isinstance(value, (int, float)):
+            if value < 0:
+                raise HTTPException(status_code=400, detail=f"{key} must be >= 0")
         row = db.query(Setting).filter(Setting.key == key).first()
         if row:
             row.value = str(value)

@@ -1,5 +1,7 @@
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+_root = os.path.join(os.path.dirname(__file__), '..')
+if _root not in sys.path:
+    sys.path.insert(0, _root)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,13 +10,16 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 from api.models import init_db, User, SessionLocal
 from api.auth import hash_password
+from api.config import ADMIN_USERNAME, ADMIN_PASSWORD
 from api.routes import auth_routes, metrics, leads, replies, analytics, settings, pipeline
 
 app = FastAPI(title="Kalnet AI-5 Dashboard", version="1.0.0")
 
+ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,9 +41,9 @@ def startup():
     init_db()
     db = SessionLocal()
     try:
-        admin = db.query(User).filter(User.username == "admin").first()
+        admin = db.query(User).filter(User.username == ADMIN_USERNAME).first()
         if not admin:
-            db.add(User(username="admin", password_hash=hash_password("admin123")))
+            db.add(User(username=ADMIN_USERNAME, password_hash=hash_password(ADMIN_PASSWORD)))
             db.commit()
     finally:
         db.close()

@@ -1246,8 +1246,7 @@ ADVANCED_EMAIL_SUBJECTS = {
                   "{company} | Closing note",
                   "Thanks for your patience with me"),
         ),
-        "recovery":     ADVANCED_EMAIL_SUBJECTS[Intent.INTERESTED]["recovery"]
-            if Intent.INTERESTED in {} else _step(  # forward ref guard
+        "recovery":     _step(
             _subj("Reconnecting after a long pause",
                   "Still relevant for {company}?",
                   "What's changed in the market",
@@ -2546,7 +2545,7 @@ def get_sequence_due_today(leads: List[Dict]) -> List[Dict]:
 
         # -- Guard: skip if lead has replied --------------------------------
         if lead.get("replied", False):
-            logger.debug("SKIP (replied)      -- %s [%s]", name, lead_id)
+            logger.info("SKIP (replied)      -- %s [%s]", name, lead_id)
             continue
 
         # -- Guard: skip if sequence already complete ----------------------

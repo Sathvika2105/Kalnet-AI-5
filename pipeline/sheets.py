@@ -15,10 +15,14 @@ SCOPES = [
 import os
 import json
 import threading
+import time
 
 _sheets_client = None
 _sheets_sheet = None
 _sheets_lock = threading.Lock()
+
+_leads_cache = {"data": None, "ts": 0}
+_LEADS_CACHE_TTL = 30
 
 def _get_sheets():
     global _sheets_client, _sheets_sheet
@@ -41,9 +45,8 @@ def _get_sheets():
         service_account_info = json.loads(raw)
     creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
     _sheets_client = gspread.authorize(creds)
-    _sheets_sheet = _sheets_client.open_by_key(
-        "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY"
-    ).sheet1
+    sheet_key = os.environ.get("GOOGLE_SHEET_KEY", "1JgAfy93z1Tiqno-suJXKXfP6iLUR3mNzWnATD4TIuSY")
+    _sheets_sheet = _sheets_client.open_by_key(sheet_key).sheet1
     return _sheets_sheet
 
 
@@ -144,7 +147,11 @@ def clean_lead_data(lead):
 
 
 # GET ALL LEADS
-def get_all_leads():
+def get_all_leads(force_refresh=False):
+
+    now = time.time()
+    if not force_refresh and _leads_cache["data"] and (now - _leads_cache["ts"]) < _LEADS_CACHE_TTL:
+        return _leads_cache["data"]
 
     sheet = _get_sheets()
     records = sheet.get_all_records()
@@ -156,6 +163,9 @@ def get_all_leads():
         lead = clean_lead_data(row)
 
         leads.append(lead)
+
+    _leads_cache["data"] = leads
+    _leads_cache["ts"] = now
 
     return leads
 
@@ -270,17 +280,12 @@ def mark_email_sent(
 
             try:
 
-                # Column 5 = email_sent_at
-                sheet.update_cell(index, 5, current_time)
-
-                # Column 6 = sequence_step
-                sheet.update_cell(index, 6, sequence_step)
-
-                # Column 8 = tier
-                sheet.update_cell(index, 8, tier)
-
-                # Column 9 = subject_line
-                sheet.update_cell(index, 9, subject_line)
+                sheet.batch_update([
+                    {"range": f"E{index}", "values": [[current_time]]},
+                    {"range": f"F{index}", "values": [[sequence_step]]},
+                    {"range": f"H{index}", "values": [[tier]]},
+                    {"range": f"I{index}", "values": [[subject_line]]},
+                ])
 
                 logger.info(f"Updated lead {lead_id}")
 
@@ -313,19 +318,14 @@ def mark_replied(
 
             try:
 
-                # Column 7 = replied
-                sheet.update_cell(index, 7, "TRUE")
-
-                # Column 10 = opt_out
-                sheet.update_cell(
-                    index,
-                    10,
-                    str(is_opt_out).upper()
-                )
-
-                # Column 11 = reply_snippet
+                updates = [
+                    {"range": f"G{index}", "values": [["TRUE"]]},
+                    {"range": f"J{index}", "values": [[str(is_opt_out).upper()]]},
+                ]
                 if snippet:
-                    sheet.update_cell(index, 11, snippet[:500])
+                    updates.append({"range": f"K{index}", "values": [[snippet[:500]]]})
+
+                sheet.batch_update(updates)
 
                 logger.info(f"Lead {lead_id} marked as replied")
 
@@ -343,11 +343,6 @@ def mark_replied(
 
 
 def mark_unsubscribed(email: str, snippet: str = "") -> bool:
-    """
-    Finds the LAST (newest) lead row by email and sets opt_out=TRUE,
-    replied=TRUE, and stores the reply snippet.
-    Returns True if a row was updated, False otherwise.
-    """
     try:
         sheet = _get_sheets()
         records = sheet.get_all_records()
@@ -356,10 +351,13 @@ def mark_unsubscribed(email: str, snippet: str = "") -> bool:
             if row.get("email", "").strip().lower() == email.strip().lower():
                 last_row = i
         if last_row:
-            sheet.update_cell(last_row, 7, "TRUE")      # column G = replied
-            sheet.update_cell(last_row, 10, "TRUE")     # column J = opt_out
+            updates = [
+                {"range": f"G{last_row}", "values": [["TRUE"]]},
+                {"range": f"J{last_row}", "values": [["TRUE"]]},
+            ]
             if snippet:
-                sheet.update_cell(last_row, 11, snippet[:500])  # column K = reply_snippet
+                updates.append({"range": f"K{last_row}", "values": [[snippet[:500]]]})
+            sheet.batch_update(updates)
             logger.info(f"Marked {email} as Unsubscribed (opt_out=TRUE) in Sheets")
             return True
         logger.warning(f"Email {email} not found in sheet for unsubscribe")

@@ -7,36 +7,24 @@ export function useKeyboardShortcuts(shortcuts) {
   useEffect(() => {
     const handler = (e) => {
       const current = shortcutsRef.current
-
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
-        for (const s of current) {
-          if (s.ctrl !== undefined) {
-            if (e.ctrlKey || e.metaKey) {
-              const key = e.key.toLowerCase()
-              if ((Array.isArray(s.key) ? s.key : [s.key]).includes(key)) {
-                if (s.ctrl !== false) continue
-              }
-            }
-          }
-        }
-      }
+      const isInput = e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT'
+      const key = e.key.toLowerCase()
 
       for (const s of current) {
-        const mod = s.ctrl ? (e.ctrlKey || e.metaKey) : true
+        if (s.ctrl && !(e.ctrlKey || e.metaKey)) continue
+        if (!s.ctrl && (e.ctrlKey || e.metaKey)) continue
+
         const keyMatch = Array.isArray(s.key)
-          ? s.key.includes(e.key.toLowerCase())
-          : e.key.toLowerCase() === s.key
+          ? s.key.includes(key)
+          : s.key === key
 
-        if (mod && keyMatch && !e.ctrlKey !== !s.ctrl) continue
+        if (!keyMatch) continue
 
-        if (mod && keyMatch) {
-          if (!s.allowInput && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) {
-            continue
-          }
-          e.preventDefault()
-          s.handler(e)
-          return
-        }
+        if (isInput && !s.allowInput) continue
+
+        e.preventDefault()
+        s.handler(e)
+        return
       }
     }
 

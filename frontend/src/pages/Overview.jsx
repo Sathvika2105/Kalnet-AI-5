@@ -1,68 +1,22 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { useMetrics } from '../hooks/usePolling'
-import { useToast } from '../context/ToastContext'
-import { playSuccessSound, playErrorSound } from '../utils/sounds'
+import { useRunPipeline } from '../hooks/useRunPipeline'
 import KPICard from '../components/KPICard'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { SkeletonPage } from '../components/Skeleton'
 import { Users, Send, MessageSquare, TrendingUp, UserX, RefreshCw, Play, Loader2 } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
-import api from '../api/client'
 
 const COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444']
 
 export default function Overview() {
-  const { addToast } = useToast()
   const { data: metrics, loading, lastUpdated, refresh } = useMetrics()
-  const [running, setRunning] = useState(false)
-  const [pipelineMsg, setPipelineMsg] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
-  const timerRef = useRef(null)
+  const { running, pipelineMsg, run } = useRunPipeline({ onComplete: () => refresh() })
 
-  const pollRef = useRef(null)
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
-      if (pollRef.current) clearInterval(pollRef.current)
-    }
-  }, [])
-
-  const runPipeline = async () => {
+  const runPipeline = () => {
     setShowConfirm(false)
-    setRunning(true)
-    setPipelineMsg('Pipeline is running...')
-    try {
-      await api.post('/pipeline/run')
-      pollRef.current = setInterval(async () => {
-        try {
-          const { data } = await api.get('/pipeline/status')
-          if (!data.running) {
-            clearInterval(pollRef.current)
-            pollRef.current = null
-            setRunning(false)
-            setPipelineMsg('')
-            if (data.success) {
-              playSuccessSound()
-              addToast('Pipeline completed successfully', 'success')
-            } else {
-              playErrorSound()
-              addToast(data.error || 'Pipeline failed', 'error', 8000)
-              setPipelineMsg(`Failed: ${data.error}`)
-            }
-            refresh()
-          }
-        } catch {
-          clearInterval(pollRef.current)
-          pollRef.current = null
-          setRunning(false)
-          setPipelineMsg('Status check failed')
-        }
-      }, 2000)
-    } catch (e) {
-      setRunning(false)
-      setPipelineMsg('Failed to trigger pipeline')
-    }
+    run()
   }
 
   if (loading) return <SkeletonPage />
