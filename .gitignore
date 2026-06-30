@@ -6,5 +6,7 @@ gettoken.py
 __pycache__/
 .ipynb_checkpoints/
 api/dashboard.db
+api/dashboard.db-shm
+api/dashboard.db-wal
 frontend/dist/
 frontend/node_modules/
